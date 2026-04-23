@@ -11,6 +11,16 @@ class TelegramWebhookController extends Controller
 {
     public function handle(Request $request, TelegramBotService $telegram, AutoReplyEngine $engine)
     {
+        $secret = config('services.telegram.webhook_secret');
+        $headerSecret = $request->header('X-Telegram-Bot-Api-Secret-Token');
+
+        if ($secret && $headerSecret !== $secret) {
+            return response()->json([
+                'ok' => false,
+                'message' => 'Invalid secret token',
+            ], 403);
+        }
+
         $update = $request->all();
         $message = $update['message'] ?? null;
 
@@ -20,20 +30,24 @@ class TelegramWebhookController extends Controller
 
         $chat = $message['chat'] ?? [];
         $from = $message['from'] ?? [];
+        $text = $message['text'] ?? '';
 
-        if (in_array(($chat['type'] ?? ''), ['group', 'supergroup'])) {
+        if (in_array(($chat['type'] ?? ''), ['group', 'supergroup', 'channel'])) {
             TelegramGroup::updateOrCreate(
-                ['chat_id' => $chat['id']],
+                ['chat_id' => (string) ($chat['id'] ?? '')],
                 [
                     'title' => $chat['title'] ?? null,
+                    'username' => $chat['username'] ?? null,
                     'type' => $chat['type'] ?? null,
                     'is_active' => true,
+                    'is_allowed_for_broadcast' => true,
                     'last_seen_at' => now(),
+                    'meta' => [
+                        'raw_chat' => $chat,
+                    ],
                 ]
             );
         }
-
-        $text = $message['text'] ?? '';
 
         $result = $engine->process([
             'managed_device_id' => null,
