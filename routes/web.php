@@ -32,4 +32,23 @@ Route::middleware('auth')->group(function () {
     Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
 });
 
+Route::get('/debug-login', function () {
+    try {
+        DB::connection()->getPdo();
+
+        return response()->json([
+            'db_connected' => true,
+            'database_name' => DB::connection()->getDatabaseName(),
+            'users_table_count' => User::count(),
+            'admin_exists' => User::where('email', 'admin@gmail.com')->exists(),
+            'session_driver' => config('session.driver'),
+            'app_key_exists' => !empty(config('app.key')),
+        ]);
+    } catch (\Throwable $e) {
+        return response()->json([
+            'db_connected' => false,
+            'error' => $e->getMessage(),
+        ], 500);
+    }
+});
 require __DIR__.'/auth.php';
