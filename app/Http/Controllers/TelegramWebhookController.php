@@ -57,6 +57,7 @@ class TelegramWebhookController extends Controller
 
             $telegram->sendMessage($chatId, $this->welcomeMessage(), [
                 'parse_mode' => 'HTML',
+                'reply_markup' => $this->welcomeKeyboard(),
             ]);
 
             return response()->json(['ok' => true]);
@@ -106,11 +107,45 @@ class TelegramWebhookController extends Controller
     protected function welcomeMessage(): string
     {
         return implode("\n", [
-            '<b>Selamat datang di AutoShare Telegram.</b>',
+            '<b>Selamat datang di VixStore AutoShare.</b>',
             '',
-            'Bot ini akan membantu kamu menyiapkan akun Telegram untuk share promosi ke daftar grup jualan milikmu.',
+            'Tempat kamu mengelola userbot Telegram untuk bantu share promosi jualan ke grup-grup yang sudah kamu daftarkan.',
             '',
-            'Untuk tahap test, fitur login nomor dan share grup sedang disiapkan. Kirim pesan apa saja ke bot ini untuk memastikan webhook sudah aktif.',
+            '<b>Apa yang bisa kamu lakukan di sini?</b>',
+            '• Membuat userbot dari akun Telegram kamu',
+            '• Menyimpan daftar grup target promosi',
+            '• Mengirim pesan promosi ke semua grup dengan command share',
+            '• Melihat status userbot dan aturan penggunaan',
+            '',
+            'Pilih menu di bawah untuk mulai.',
         ]);
+    }
+
+    protected function welcomeKeyboard(): array
+    {
+        return [
+            'inline_keyboard' => [
+                [
+                    [
+                        'text' => 'Buat Userbot',
+                        'callback_data' => 'userbot:create',
+                    ],
+                    [
+                        'text' => 'List Bot',
+                        'callback_data' => 'userbot:list',
+                    ],
+                ],
+                [
+                    [
+                        'text' => 'Tentang Bot',
+                        'callback_data' => 'bot:about',
+                    ],
+                    [
+                        'text' => 'Rules',
+                        'callback_data' => 'bot:rules',
+                    ],
+                ],
+            ],
+        ];
     }
 }

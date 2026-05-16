@@ -62,7 +62,8 @@ class TelegramWebhookStartTest extends TestCase
         Http::assertSent(function ($request) {
             return $request->url() === 'https://api.telegram.org/bottesting-token/sendMessage'
                 && $request['chat_id'] === '987654321'
-                && str_contains($request['text'], 'Selamat datang di AutoShare Telegram');
+                && str_contains($request['text'], 'Selamat datang di VixStore AutoShare')
+                && ($request['reply_markup']['inline_keyboard'][0][0]['text'] ?? null) === 'Buat Userbot';
         });
     }
 }
