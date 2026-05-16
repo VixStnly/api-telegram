@@ -46,6 +46,6 @@ class TelegramLoginController extends Controller
 
         return $token !== ''
             && hash_equals((string) $account->pending_login_token, $token)
-            && $account->auth_status === 'awaiting_code';
+            && in_array($account->auth_status, ['sending_code', 'awaiting_code'], true);
     }
 }

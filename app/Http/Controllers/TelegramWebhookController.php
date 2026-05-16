@@ -101,6 +101,7 @@ class TelegramWebhookController extends Controller
                 'Code Hash: <code>' . e($account->phone_code_hash ? 'ada (' . strlen($account->phone_code_hash) . ')' : '-') . '</code>',
                 'Pending Session: <code>' . e($account->pending_session_string ? 'ada (' . strlen($account->pending_session_string) . ')' : '-') . '</code>',
                 'Login Token: <code>' . e($account->pending_login_token ? Str::limit($account->pending_login_token, 8, '') : '-') . '</code>',
+                'OTP URL: <code>' . e($account->pending_login_token ? $this->otpUrl($account) : '-') . '</code>',
                 'Error: <code>' . e($account->last_error ?? '-') . '</code>',
             ]), ['parse_mode' => 'HTML']);
 
@@ -526,7 +527,7 @@ class TelegramWebhookController extends Controller
             'Format wajib pakai kode negara.',
             'Contoh: <code>+6281234567890</code>',
             '',
-            'Setelah itu Telegram akan mengirim kode OTP ke akun tersebut, lalu kamu kirim kode OTP-nya ke bot ini.',
+            'Setelah itu Telegram akan mengirim kode OTP ke akun tersebut. Masukkan OTP lewat tombol web yang bot kirim, bukan lewat chat.',
         ]);
     }
 
@@ -537,14 +538,19 @@ class TelegramWebhookController extends Controller
                 [
                     [
                         'text' => 'Input OTP',
-                        'url' => route('telegram-login.show', [
-                            'account' => $account->id,
-                            'token' => $account->pending_login_token,
-                        ]),
+                        'url' => $this->otpUrl($account),
                     ],
                 ],
             ],
         ];
+    }
+
+    protected function otpUrl(TelegramClientAccount $account): string
+    {
+        return url()->route('telegram-login.show', [
+            'account' => $account->id,
+            'token' => $account->pending_login_token,
+        ]);
     }
 
     protected function welcomeMessage(): string
