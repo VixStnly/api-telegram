@@ -47,17 +47,18 @@ class PyrogramWorkerService
         ]);
     }
 
-    public function startLoginFlow(TelegramClientAccount $account): array
+    public function startLoginFlow(TelegramClientAccount $account, string $token): array
     {
         $python = base_path('userbot_worker/.venv/bin/python');
         $worker = base_path('userbot_worker/worker.py');
         $log = storage_path('logs/userbot-login-' . $account->id . '.log');
 
         $command = sprintf(
-            'nohup %s %s login-flow %s --timeout 300 > %s 2>&1 & echo $!',
+            'nohup %s %s login-flow %s --token %s --timeout 300 > %s 2>&1 & echo $!',
             escapeshellarg($python),
             escapeshellarg($worker),
             escapeshellarg((string) $account->id),
+            escapeshellarg($token),
             escapeshellarg($log)
         );
 

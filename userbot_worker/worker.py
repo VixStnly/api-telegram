@@ -341,8 +341,8 @@ def sign_in_direct(
         raise
 
 
-def login_flow(account_id: int, timeout_seconds: int = 300) -> None:
-    print(f"login_flow started account_id={account_id}", flush=True)
+def login_flow(account_id: int, login_token: str, timeout_seconds: int = 300) -> None:
+    print(f"login_flow started account_id={account_id} token={login_token[:8]}", flush=True)
     config = load_config()
     db = config["db"]
     print(
@@ -359,6 +359,10 @@ def login_flow(account_id: int, timeout_seconds: int = 300) -> None:
 
         if not account:
             raise RuntimeError("Account not found")
+
+        if account.get("pending_login_token") != login_token:
+            print("login token is no longer current", flush=True)
+            return
 
         if not account.get("phone_number"):
             raise RuntimeError("phone_number is empty")
@@ -384,15 +388,17 @@ def login_flow(account_id: int, timeout_seconds: int = 300) -> None:
                     last_error = null,
                     updated_at = now()
                 where id = %s
+                  and pending_login_token = %s
                 """,
-                (sent_code.phone_code_hash, account_id),
+                (sent_code.phone_code_hash, account_id, login_token),
             )
 
             send_bot_message(account["bot_chat_id"], "\n".join([
                 "<b>Kode OTP sudah dikirim oleh Telegram.</b>",
                 "",
-                "Silakan kirim kode OTP terbaru ke chat ini.",
-                "Contoh: <code>12345</code>",
+                "Buka tombol <b>Input OTP</b> di pesan sebelumnya, lalu masukkan kode terbaru di halaman web.",
+                "",
+                "Jangan kirim kode OTP langsung di chat bot agar tidak diblokir sistem keamanan Telegram.",
             ]))
 
             deadline = time.time() + timeout_seconds
@@ -402,9 +408,13 @@ def login_flow(account_id: int, timeout_seconds: int = 300) -> None:
             while time.time() < deadline:
                 latest = fetch_one(
                     conn,
-                    "select pending_otp_code from telegram_client_accounts where id = %s limit 1",
+                    "select pending_otp_code, pending_login_token from telegram_client_accounts where id = %s limit 1",
                     (account_id,),
                 )
+
+                if latest and latest.get("pending_login_token") != login_token:
+                    print("login token changed while waiting; exiting old worker", flush=True)
+                    return
 
                 if latest and latest.get("pending_otp_code"):
                     otp_code = str(latest["pending_otp_code"])
@@ -423,8 +433,9 @@ def login_flow(account_id: int, timeout_seconds: int = 300) -> None:
                         last_error = 'OTP_TIMEOUT',
                         updated_at = now()
                     where id = %s
+                      and pending_login_token = %s
                     """,
-                    (account_id,),
+                    (account_id, login_token),
                 )
                 send_bot_message(account["bot_chat_id"], "Kode OTP kedaluwarsa. Klik <b>Buat Userbot</b> untuk mencoba lagi.")
                 return
@@ -437,8 +448,9 @@ def login_flow(account_id: int, timeout_seconds: int = 300) -> None:
                 set pending_otp_code = null,
                     updated_at = now()
                 where id = %s
+                  and pending_login_token = %s
                 """,
-                (account_id,),
+                (account_id, login_token),
             )
 
             try:
@@ -456,8 +468,9 @@ def login_flow(account_id: int, timeout_seconds: int = 300) -> None:
                         last_error = null,
                         updated_at = now()
                     where id = %s
+                      and pending_login_token = %s
                     """,
-                    (account_id,),
+                    (account_id, login_token),
                 )
                 send_bot_message(account["bot_chat_id"], "Akun ini memakai password 2FA. Fitur input password akan disambungkan berikutnya.")
                 return
@@ -473,13 +486,15 @@ def login_flow(account_id: int, timeout_seconds: int = 300) -> None:
                     phone_code_hash = null,
                     pending_otp_code = null,
                     pending_session_string = null,
+                    pending_login_token = null,
                     last_login_at = now(),
                     last_seen_at = now(),
                     last_error = null,
                     updated_at = now()
                 where id = %s
+                  and pending_login_token = %s
                 """,
-                (account_id,),
+                (account_id, login_token),
             )
 
             send_bot_message(account["bot_chat_id"], "\n".join([

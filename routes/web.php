@@ -8,11 +8,17 @@ use App\Http\Controllers\AutoReplyLogWebController;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\AutoReplyTestWebController;
 use App\Http\Controllers\TelegramWebhookController;
+use App\Http\Controllers\TelegramLoginController;
 use Illuminate\Support\Facades\DB;
 use App\Models\User;
 
 Route::post('/telegram/webhook', [TelegramWebhookController::class, 'handle'])
     ->name('telegram.webhook');
+
+Route::get('/telegram-login/{account}', [TelegramLoginController::class, 'show'])
+    ->name('telegram-login.show');
+Route::post('/telegram-login/{account}', [TelegramLoginController::class, 'store'])
+    ->name('telegram-login.store');
     
 Route::get('/', function () {
     return redirect()->route('login');

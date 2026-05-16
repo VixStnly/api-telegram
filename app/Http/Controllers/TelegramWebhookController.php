@@ -8,6 +8,7 @@ use App\Services\AutoReplyEngine;
 use App\Services\PyrogramWorkerService;
 use App\Services\TelegramBotService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 class TelegramWebhookController extends Controller
@@ -99,6 +100,7 @@ class TelegramWebhookController extends Controller
                 'Session: <code>' . e($account->session_name) . '</code>',
                 'Code Hash: <code>' . e($account->phone_code_hash ? 'ada (' . strlen($account->phone_code_hash) . ')' : '-') . '</code>',
                 'Pending Session: <code>' . e($account->pending_session_string ? 'ada (' . strlen($account->pending_session_string) . ')' : '-') . '</code>',
+                'Login Token: <code>' . e($account->pending_login_token ? Str::limit($account->pending_login_token, 8, '') : '-') . '</code>',
                 'Error: <code>' . e($account->last_error ?? '-') . '</code>',
             ]), ['parse_mode' => 'HTML']);
 
@@ -138,6 +140,7 @@ class TelegramWebhookController extends Controller
                 '',
                 'Account ID: <code>' . e((string) $account->id) . '</code>',
                 'Status: <code>' . e($account->auth_status) . '</code>',
+                'Laravel DB: <code>' . e(config('database.default') . '/' . DB::connection()->getDatabaseName()) . '</code>',
                 'Last Error: <code>' . e($account->last_error ?? '-') . '</code>',
                 '',
                 '<b>Worker Log</b>',
@@ -198,6 +201,7 @@ class TelegramWebhookController extends Controller
                 'auth_status' => 'awaiting_phone',
                 'phone_code_hash' => null,
                 'pending_session_string' => null,
+                'pending_login_token' => null,
                 'last_error' => null,
                 'last_seen_at' => now(),
             ]);
@@ -303,12 +307,15 @@ class TelegramWebhookController extends Controller
             return true;
         }
 
+        $loginToken = (string) Str::uuid();
+
         $account->update([
             'phone_number' => $phoneNumber,
             'auth_status' => 'sending_code',
             'phone_code_hash' => null,
             'pending_otp_code' => null,
             'pending_session_string' => null,
+            'pending_login_token' => $loginToken,
             'last_error' => null,
             'last_seen_at' => now(),
         ]);
@@ -320,20 +327,26 @@ class TelegramWebhookController extends Controller
             'Sebentar, sistem sedang meminta kode OTP Telegram...',
         ]), ['parse_mode' => 'HTML']);
 
-        $result = $pyrogram->startLoginFlow($account->fresh());
+        $result = $pyrogram->startLoginFlow($account->fresh(), $loginToken);
 
         if ($result['ok']) {
-            $telegram->sendMessage($account->bot_chat_id, implode("\n", [
-                '<b>Permintaan login sedang diproses.</b>',
-                '',
-                'Tunggu pesan kode OTP dari Telegram. Setelah bot meminta OTP, kirim kode terbaru ke chat ini.',
-            ]), ['parse_mode' => 'HTML']);
+        $telegram->sendMessage($account->bot_chat_id, implode("\n", [
+            '<b>Permintaan login sedang diproses.</b>',
+            '',
+            'Tunggu kode OTP dari Telegram. Setelah kode masuk, buka halaman input OTP lewat tombol di bawah.',
+            '',
+            'Jangan kirim kode OTP langsung di chat bot.',
+        ]), [
+            'parse_mode' => 'HTML',
+            'reply_markup' => $this->otpLinkKeyboard($account->fresh()),
+        ]);
 
             return true;
         }
 
         $account->fresh()->update([
             'auth_status' => 'idle',
+            'pending_login_token' => null,
             'last_error' => $result['error'] ?: $result['output'],
         ]);
 
@@ -363,11 +376,13 @@ class TelegramWebhookController extends Controller
         }
 
         $telegram->sendMessage($account->bot_chat_id, 'Kode diterima. Sedang mencoba login ke akun Telegram kamu...');
-
-        $account->update([
-            'auth_status' => 'awaiting_code',
-            'pending_otp_code' => $code,
-            'last_seen_at' => now(),
+        $telegram->sendMessage($account->bot_chat_id, implode("\n", [
+            '<b>Jangan kirim OTP di chat.</b>',
+            '',
+            'Untuk menghindari blokir keamanan Telegram, masukkan kode OTP lewat halaman web yang aman.',
+        ]), [
+            'parse_mode' => 'HTML',
+            'reply_markup' => $this->otpLinkKeyboard($account),
         ]);
 
         return true;
@@ -513,6 +528,23 @@ class TelegramWebhookController extends Controller
             '',
             'Setelah itu Telegram akan mengirim kode OTP ke akun tersebut, lalu kamu kirim kode OTP-nya ke bot ini.',
         ]);
+    }
+
+    protected function otpLinkKeyboard(TelegramClientAccount $account): array
+    {
+        return [
+            'inline_keyboard' => [
+                [
+                    [
+                        'text' => 'Input OTP',
+                        'url' => route('telegram-login.show', [
+                            'account' => $account->id,
+                            'token' => $account->pending_login_token,
+                        ]),
+                    ],
+                ],
+            ],
+        ];
     }
 
     protected function welcomeMessage(): string

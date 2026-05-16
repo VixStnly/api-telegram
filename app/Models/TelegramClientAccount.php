@@ -22,6 +22,7 @@ class TelegramClientAccount extends Model
         'phone_code_hash',
         'pending_otp_code',
         'pending_otp_requested_at',
+        'pending_login_token',
         'last_login_at',
         'last_seen_at',
         'subscription_expires_at',
