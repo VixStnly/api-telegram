@@ -66,7 +66,13 @@ class TelegramWebhookController extends Controller
         }
 
         if ($text === '/start' && $chatId !== '') {
-            $this->registerClientAccount($chatId, $from);
+            $account = $this->registerClientAccount($chatId, $from);
+            $account->update([
+                'auth_status' => 'idle',
+                'phone_code_hash' => null,
+                'pending_session_string' => null,
+                'last_error' => null,
+            ]);
 
             $telegram->sendMessage($chatId, $this->welcomeMessage(), [
                 'parse_mode' => 'HTML',
@@ -239,6 +245,15 @@ class TelegramWebhookController extends Controller
             return $this->handleTwoFactorPassword($account, $text, $telegram, $pyrogram);
         }
 
+        if ($this->looksLikePhoneNumber($text) || $this->looksLikeOtpCode($text)) {
+            $telegram->sendMessage($account->bot_chat_id, $this->wrongFlowMessage(), [
+                'parse_mode' => 'HTML',
+                'reply_markup' => $this->welcomeKeyboard(),
+            ]);
+
+            return true;
+        }
+
         return false;
     }
 
@@ -281,7 +296,7 @@ class TelegramWebhookController extends Controller
             $account->fresh()->update([
                 'auth_status' => 'awaiting_code',
                 'phone_code_hash' => $result['data']['phone_code_hash'] ?? null,
-                'pending_session_string' => $result['data']['session_string'] ?? null,
+                'pending_session_string' => null,
                 'session_file' => $result['data']['session_file'] ?? null,
                 'last_error' => null,
                 'last_seen_at' => now(),
@@ -309,7 +324,7 @@ class TelegramWebhookController extends Controller
             '<b>Belum bisa mengirim OTP.</b>',
             '',
             'Kemungkinan worker Pyrogram belum siap atau konfigurasi API ID/API HASH belum benar.',
-            $this->formatWorkerErrorForTelegram($result),
+            $this->formatWorkerErrorForTelegram($result, 'Detail'),
             'Coba lagi beberapa saat, atau hubungi admin.',
         ]), ['parse_mode' => 'HTML']);
 
@@ -380,7 +395,7 @@ class TelegramWebhookController extends Controller
             '<b>Login belum berhasil.</b>',
             '',
             'Kode OTP mungkin salah atau sudah kedaluwarsa. Kirim ulang kode OTP yang terbaru.',
-            $this->formatWorkerErrorForTelegram($result),
+            $this->formatWorkerErrorForTelegram($result, 'Alasan'),
         ]), ['parse_mode' => 'HTML']);
 
         return true;
@@ -431,7 +446,7 @@ class TelegramWebhookController extends Controller
 
         if (!$account->exists) {
             $account->session_name = 'client_' . Str::slug($chatId) . '_' . Str::lower(Str::random(8));
-            $account->auth_status = 'awaiting_phone';
+            $account->auth_status = 'idle';
         }
 
         $account->fill([
@@ -473,14 +488,45 @@ class TelegramWebhookController extends Controller
         return $phoneNumber;
     }
 
-    protected function formatWorkerErrorForTelegram(array $result): string
+    protected function looksLikePhoneNumber(string $text): bool
+    {
+        $clean = preg_replace('/[^\d+]+/', '', trim($text));
+
+        return is_string($clean)
+            && preg_match('/^(\+?\d{8,15}|0\d{8,14})$/', $clean) === 1;
+    }
+
+    protected function looksLikeOtpCode(string $text): bool
+    {
+        return preg_match('/^\s*\d{4,8}\s*$/', $text) === 1;
+    }
+
+    protected function wrongFlowMessage(): string
+    {
+        return implode("\n", [
+            '<b>Mulai dari menu dulu.</b>',
+            '',
+            'Untuk membuat userbot, klik tombol <b>Buat Userbot</b> lalu ikuti instruksi nomor dan OTP dari bot ini.',
+        ]);
+    }
+
+    protected function formatWorkerErrorForTelegram(array $result, string $label = 'Detail'): string
     {
         $error = trim((string) ($result['error'] ?: $result['output'] ?: 'Tidak ada detail error.'));
         $lines = array_values(array_filter(array_map('trim', preg_split('/\r\n|\r|\n/', $error) ?: [])));
-        $error = implode("\n", array_slice($lines, -8));
-        $error = Str::limit($error, 700);
 
-        return 'Detail: <code>' . e($error) . '</code>';
+        $important = collect($lines)->first(function (string $line) {
+            return str_contains($line, 'Telegram says:')
+                || str_contains($line, 'ModuleNotFoundError')
+                || str_contains($line, 'RuntimeError')
+                || str_contains($line, 'struct.error')
+                || str_contains($line, 'Database connection failed');
+        });
+
+        $error = $important ?: implode("\n", array_slice($lines, -3));
+        $error = Str::limit($error, 350);
+
+        return $label . ': <code>' . e($error) . '</code>';
     }
 
     protected function requestPhoneMessage(): string

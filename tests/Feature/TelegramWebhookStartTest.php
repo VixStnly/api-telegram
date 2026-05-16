@@ -53,7 +53,7 @@ class TelegramWebhookStartTest extends TestCase
             'bot_user_id' => '987654321',
             'bot_username' => 'tester_shop',
             'bot_first_name' => 'Tester',
-            'auth_status' => 'awaiting_phone',
+            'auth_status' => 'idle',
         ]);
 
         $account = TelegramClientAccount::first();
