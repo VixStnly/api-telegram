@@ -29,6 +29,11 @@ class PyrogramWorkerService
             $code,
         ];
 
+        if (!empty($account->pending_session_string)) {
+            $command[] = '--session-string';
+            $command[] = (string) $account->pending_session_string;
+        }
+
         if ($password !== null) {
             $command[] = '--password';
             $command[] = $password;

@@ -92,6 +92,7 @@ class TelegramWebhookController extends Controller
                 'Nomor: <code>' . e($account->phone_number ?? '-') . '</code>',
                 'Session: <code>' . e($account->session_name) . '</code>',
                 'Code Hash: <code>' . e($account->phone_code_hash ? 'ada (' . strlen($account->phone_code_hash) . ')' : '-') . '</code>',
+                'Pending Session: <code>' . e($account->pending_session_string ? 'ada (' . strlen($account->pending_session_string) . ')' : '-') . '</code>',
                 'Error: <code>' . e($account->last_error ?? '-') . '</code>',
             ]), ['parse_mode' => 'HTML']);
 
@@ -163,6 +164,7 @@ class TelegramWebhookController extends Controller
             $account->update([
                 'auth_status' => 'awaiting_phone',
                 'phone_code_hash' => null,
+                'pending_session_string' => null,
                 'last_error' => null,
                 'last_seen_at' => now(),
             ]);
@@ -279,6 +281,7 @@ class TelegramWebhookController extends Controller
             $account->fresh()->update([
                 'auth_status' => 'awaiting_code',
                 'phone_code_hash' => $result['data']['phone_code_hash'] ?? null,
+                'pending_session_string' => $result['data']['session_string'] ?? null,
                 'session_file' => $result['data']['session_file'] ?? null,
                 'last_error' => null,
                 'last_seen_at' => now(),
@@ -351,6 +354,8 @@ class TelegramWebhookController extends Controller
             $account->fresh()->update([
                 'auth_status' => 'authorized',
                 'bot_username' => $result['data']['telegram_username'] ?? $account->bot_username,
+                'phone_code_hash' => null,
+                'pending_session_string' => null,
                 'last_error' => null,
                 'last_login_at' => now(),
                 'last_seen_at' => now(),
@@ -396,6 +401,8 @@ class TelegramWebhookController extends Controller
             $account->fresh()->update([
                 'auth_status' => 'authorized',
                 'bot_username' => $result['data']['telegram_username'] ?? $account->bot_username,
+                'phone_code_hash' => null,
+                'pending_session_string' => null,
                 'last_error' => null,
                 'last_login_at' => now(),
                 'last_seen_at' => now(),

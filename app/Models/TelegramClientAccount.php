@@ -17,6 +17,7 @@ class TelegramClientAccount extends Model
         'phone_number',
         'session_name',
         'session_file',
+        'pending_session_string',
         'auth_status',
         'phone_code_hash',
         'last_login_at',

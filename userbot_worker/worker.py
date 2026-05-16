@@ -88,11 +88,14 @@ def execute(conn, query: str, params: tuple[Any, ...]) -> None:
 def client_for(account: dict[str, Any], config: dict[str, Any]) -> Client:
     SESSION_DIR.mkdir(parents=True, exist_ok=True)
 
+    session_string = account.get("session_string")
+
     return Client(
         name=account["session_name"],
         api_id=config["api_id"],
         api_hash=config["api_hash"],
         workdir=str(SESSION_DIR),
+        session_string=session_string,
     )
 
 
@@ -148,6 +151,7 @@ def send_code_direct(phone_number: str, session_name: str) -> None:
     app.connect()
     try:
         sent_code = app.send_code(phone_number)
+        session_string = app.export_session_string()
     finally:
         app.disconnect()
 
@@ -155,6 +159,7 @@ def send_code_direct(phone_number: str, session_name: str) -> None:
         "status": "code_sent",
         "phone_code_hash": sent_code.phone_code_hash,
         "phone_code_hash_length": len(sent_code.phone_code_hash),
+        "session_string": session_string,
         "session_file": str(SESSION_DIR / f"{session_name}.session"),
     }))
 
@@ -253,11 +258,13 @@ def sign_in_direct(
     session_name: str,
     phone_code_hash: str,
     code: str,
+    session_string: str | None = None,
     password: str | None = None,
 ) -> None:
     config = load_config()
     account = {
         "session_name": session_name,
+        "session_string": session_string,
     }
 
     try:
@@ -475,6 +482,7 @@ def main() -> None:
     sign_in_direct_parser.add_argument("session_name")
     sign_in_direct_parser.add_argument("phone_code_hash")
     sign_in_direct_parser.add_argument("code")
+    sign_in_direct_parser.add_argument("--session-string")
     sign_in_direct_parser.add_argument("--password")
 
     share_parser = subparsers.add_parser("share")
@@ -499,6 +507,7 @@ def main() -> None:
             args.session_name,
             args.phone_code_hash,
             args.code,
+            args.session_string,
             args.password,
         )
     elif args.command == "share":
