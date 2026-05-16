@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\TelegramClientAccount;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Process;
 use Tests\TestCase;
 
 class TelegramWebhookStartTest extends TestCase
@@ -65,5 +66,103 @@ class TelegramWebhookStartTest extends TestCase
                 && str_contains($request['text'], 'Selamat datang di VixStore AutoShare')
                 && ($request['reply_markup']['inline_keyboard'][0][0]['text'] ?? null) === 'Buat Userbot';
         });
+    }
+
+    public function test_create_userbot_button_requests_phone_number(): void
+    {
+        config([
+            'services.telegram.bot_token' => 'testing-token',
+            'services.telegram.webhook_secret' => 'testing-secret',
+        ]);
+
+        Http::fake([
+            'https://api.telegram.org/bottesting-token/*' => Http::response(['ok' => true]),
+        ]);
+
+        $response = $this
+            ->withHeader('X-Telegram-Bot-Api-Secret-Token', 'testing-secret')
+            ->postJson('/telegram/webhook', [
+                'update_id' => 2,
+                'callback_query' => [
+                    'id' => 'callback-1',
+                    'data' => 'userbot:create',
+                    'from' => [
+                        'id' => 987654321,
+                        'is_bot' => false,
+                        'first_name' => 'Tester',
+                        'username' => 'tester_shop',
+                    ],
+                    'message' => [
+                        'message_id' => 11,
+                        'chat' => [
+                            'id' => 987654321,
+                            'type' => 'private',
+                        ],
+                    ],
+                ],
+            ]);
+
+        $response->assertOk()->assertJson(['ok' => true]);
+
+        $this->assertDatabaseHas('telegram_client_accounts', [
+            'bot_chat_id' => '987654321',
+            'auth_status' => 'awaiting_phone',
+        ]);
+
+        Http::assertSent(function ($request) {
+            return $request->url() === 'https://api.telegram.org/bottesting-token/sendMessage'
+                && str_contains($request['text'], 'Kirim nomor Telegram');
+        });
+    }
+
+    public function test_phone_number_is_saved_and_otp_is_requested(): void
+    {
+        config([
+            'services.telegram.bot_token' => 'testing-token',
+            'services.telegram.webhook_secret' => 'testing-secret',
+        ]);
+
+        Http::fake([
+            'https://api.telegram.org/bottesting-token/sendMessage' => Http::response(['ok' => true]),
+        ]);
+
+        Process::fake([
+            '*' => Process::result(output: "code_sent\n"),
+        ]);
+
+        TelegramClientAccount::create([
+            'bot_chat_id' => '987654321',
+            'bot_user_id' => '987654321',
+            'session_name' => 'client_987654321_test',
+            'auth_status' => 'awaiting_phone',
+            'is_active' => true,
+        ]);
+
+        $response = $this
+            ->withHeader('X-Telegram-Bot-Api-Secret-Token', 'testing-secret')
+            ->postJson('/telegram/webhook', [
+                'update_id' => 3,
+                'message' => [
+                    'message_id' => 12,
+                    'text' => '081234567890',
+                    'chat' => [
+                        'id' => 987654321,
+                        'type' => 'private',
+                    ],
+                    'from' => [
+                        'id' => 987654321,
+                        'is_bot' => false,
+                        'first_name' => 'Tester',
+                    ],
+                ],
+            ]);
+
+        $response->assertOk()->assertJson(['ok' => true]);
+
+        $this->assertDatabaseHas('telegram_client_accounts', [
+            'bot_chat_id' => '987654321',
+            'phone_number' => '+6281234567890',
+            'auth_status' => 'awaiting_code',
+        ]);
     }
 }

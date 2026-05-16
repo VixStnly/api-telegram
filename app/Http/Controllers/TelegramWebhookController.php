@@ -5,14 +5,19 @@ namespace App\Http\Controllers;
 use App\Models\TelegramClientAccount;
 use App\Models\TelegramGroup;
 use App\Services\AutoReplyEngine;
+use App\Services\PyrogramWorkerService;
 use App\Services\TelegramBotService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 
 class TelegramWebhookController extends Controller
 {
-    public function handle(Request $request, TelegramBotService $telegram, AutoReplyEngine $engine)
-    {
+    public function handle(
+        Request $request,
+        TelegramBotService $telegram,
+        AutoReplyEngine $engine,
+        PyrogramWorkerService $pyrogram
+    ) {
         $secret = config('services.telegram.webhook_secret');
         $headerSecret = $request->header('X-Telegram-Bot-Api-Secret-Token');
 
@@ -24,6 +29,14 @@ class TelegramWebhookController extends Controller
         }
 
         $update = $request->all();
+        $callbackQuery = $update['callback_query'] ?? null;
+
+        if ($callbackQuery) {
+            $this->handleCallbackQuery($callbackQuery, $telegram);
+
+            return response()->json(['ok' => true]);
+        }
+
         $message = $update['message'] ?? null;
 
         if (!$message) {
@@ -63,6 +76,14 @@ class TelegramWebhookController extends Controller
             return response()->json(['ok' => true]);
         }
 
+        if ($chatId !== '' && ($chat['type'] ?? '') === 'private') {
+            $account = $this->findOrRegisterClientAccount($chatId, $from);
+
+            if ($this->handleOnboardingMessage($account, $text, $telegram, $pyrogram)) {
+                return response()->json(['ok' => true]);
+            }
+        }
+
         $result = $engine->process([
             'managed_device_id' => null,
             'group_key' => $chatId,
@@ -81,6 +102,274 @@ class TelegramWebhookController extends Controller
         }
 
         return response()->json(['ok' => true]);
+    }
+
+    protected function handleCallbackQuery(array $callbackQuery, TelegramBotService $telegram): void
+    {
+        $callbackId = (string) ($callbackQuery['id'] ?? '');
+        $data = (string) ($callbackQuery['data'] ?? '');
+        $message = $callbackQuery['message'] ?? [];
+        $chat = $message['chat'] ?? [];
+        $from = $callbackQuery['from'] ?? [];
+        $chatId = (string) ($chat['id'] ?? '');
+
+        if ($callbackId !== '') {
+            $telegram->answerCallbackQuery($callbackId);
+        }
+
+        if ($chatId === '') {
+            return;
+        }
+
+        if ($data === 'userbot:create') {
+            $account = $this->findOrRegisterClientAccount($chatId, $from);
+            $account->update([
+                'auth_status' => 'awaiting_phone',
+                'last_error' => null,
+                'last_seen_at' => now(),
+            ]);
+
+            $telegram->sendMessage($chatId, $this->requestPhoneMessage(), [
+                'parse_mode' => 'HTML',
+            ]);
+
+            return;
+        }
+
+        if ($data === 'userbot:list') {
+            $account = TelegramClientAccount::where('bot_chat_id', $chatId)->first();
+            $status = $account?->auth_status ?? 'belum dibuat';
+            $phone = $account?->phone_number ?? '-';
+
+            $telegram->sendMessage($chatId, implode("\n", [
+                '<b>List Userbot Kamu</b>',
+                '',
+                "Nomor: {$phone}",
+                "Status: {$status}",
+                '',
+                'Nanti di sini akan tampil semua userbot aktif dan daftar grupnya.',
+            ]), ['parse_mode' => 'HTML']);
+
+            return;
+        }
+
+        if ($data === 'bot:about') {
+            $telegram->sendMessage($chatId, implode("\n", [
+                '<b>Tentang VixStore AutoShare</b>',
+                '',
+                'Bot ini membantu pelanggan menghubungkan akun Telegram mereka sebagai userbot untuk share promosi ke grup yang mereka daftarkan sendiri.',
+                '',
+                'Fitur login userbot sedang disambungkan bertahap.',
+            ]), ['parse_mode' => 'HTML']);
+
+            return;
+        }
+
+        if ($data === 'bot:rules') {
+            $telegram->sendMessage($chatId, implode("\n", [
+                '<b>Rules Penggunaan</b>',
+                '',
+                '1. Gunakan hanya untuk grup yang kamu ikuti dan izinkan promosi.',
+                '2. Jangan mengirim spam berlebihan.',
+                '3. Akun Telegram yang terkena limit menjadi tanggung jawab pemilik akun.',
+                '4. Gunakan jeda kirim agar akun tetap aman.',
+            ]), ['parse_mode' => 'HTML']);
+        }
+    }
+
+    protected function handleOnboardingMessage(
+        TelegramClientAccount $account,
+        string $text,
+        TelegramBotService $telegram,
+        PyrogramWorkerService $pyrogram
+    ): bool {
+        if ($text === '') {
+            return false;
+        }
+
+        if ($account->auth_status === 'awaiting_phone') {
+            return $this->handlePhoneNumber($account, $text, $telegram, $pyrogram);
+        }
+
+        if ($account->auth_status === 'awaiting_code') {
+            return $this->handleOtpCode($account, $text, $telegram, $pyrogram);
+        }
+
+        if ($account->auth_status === 'awaiting_password') {
+            return $this->handleTwoFactorPassword($account, $text, $telegram, $pyrogram);
+        }
+
+        return false;
+    }
+
+    protected function handlePhoneNumber(
+        TelegramClientAccount $account,
+        string $text,
+        TelegramBotService $telegram,
+        PyrogramWorkerService $pyrogram
+    ): bool {
+        $phoneNumber = $this->normalizePhoneNumber($text);
+
+        if (!$phoneNumber) {
+            $telegram->sendMessage($account->bot_chat_id, implode("\n", [
+                '<b>Format nomor belum valid.</b>',
+                '',
+                'Kirim nomor Telegram dengan kode negara.',
+                'Contoh: <code>+6281234567890</code>',
+            ]), ['parse_mode' => 'HTML']);
+
+            return true;
+        }
+
+        $account->update([
+            'phone_number' => $phoneNumber,
+            'auth_status' => 'sending_code',
+            'last_error' => null,
+            'last_seen_at' => now(),
+        ]);
+
+        $telegram->sendMessage($account->bot_chat_id, implode("\n", [
+            '<b>Nomor diterima.</b>',
+            '',
+            "Nomor: <code>{$phoneNumber}</code>",
+            'Sebentar, sistem sedang meminta kode OTP Telegram...',
+        ]), ['parse_mode' => 'HTML']);
+
+        $result = $pyrogram->sendCode($account->fresh());
+
+        if ($result['ok']) {
+            $account->fresh()->update([
+                'auth_status' => 'awaiting_code',
+                'last_error' => null,
+                'last_seen_at' => now(),
+            ]);
+
+            $telegram->sendMessage($account->bot_chat_id, implode("\n", [
+                '<b>Kode OTP sudah dikirim oleh Telegram.</b>',
+                '',
+                'Silakan kirim kode OTP ke chat ini.',
+                'Contoh: <code>12345</code>',
+                '',
+                'Jangan kirim kode ini ke orang lain selain bot ini.',
+            ]), ['parse_mode' => 'HTML']);
+
+            return true;
+        }
+
+        $account->fresh()->update([
+            'auth_status' => 'awaiting_phone',
+            'last_error' => $result['error'] ?: $result['output'],
+        ]);
+
+        $telegram->sendMessage($account->bot_chat_id, implode("\n", [
+            '<b>Belum bisa mengirim OTP.</b>',
+            '',
+            'Kemungkinan worker Pyrogram belum siap atau konfigurasi API ID/API HASH belum benar.',
+            'Coba lagi beberapa saat, atau hubungi admin.',
+        ]), ['parse_mode' => 'HTML']);
+
+        return true;
+    }
+
+    protected function handleOtpCode(
+        TelegramClientAccount $account,
+        string $text,
+        TelegramBotService $telegram,
+        PyrogramWorkerService $pyrogram
+    ): bool {
+        $code = preg_replace('/\D+/', '', $text);
+
+        if (strlen($code) < 4) {
+            $telegram->sendMessage($account->bot_chat_id, 'Kode OTP belum valid. Kirim angka OTP dari Telegram.');
+
+            return true;
+        }
+
+        $telegram->sendMessage($account->bot_chat_id, 'Kode diterima. Sedang mencoba login ke akun Telegram kamu...');
+
+        $result = $pyrogram->signIn($account, $code);
+        $output = $result['output'];
+
+        if ($result['ok'] && str_contains($output, 'password_required')) {
+            $account->fresh()->update([
+                'auth_status' => 'awaiting_password',
+                'last_seen_at' => now(),
+            ]);
+
+            $telegram->sendMessage($account->bot_chat_id, implode("\n", [
+                '<b>Akun kamu memakai password 2FA.</b>',
+                '',
+                'Kirim password 2FA Telegram kamu ke chat ini untuk menyelesaikan login.',
+            ]), ['parse_mode' => 'HTML']);
+
+            return true;
+        }
+
+        if ($result['ok']) {
+            $account->fresh()->update([
+                'auth_status' => 'authorized',
+                'last_error' => null,
+                'last_login_at' => now(),
+                'last_seen_at' => now(),
+            ]);
+
+            $telegram->sendMessage($account->bot_chat_id, implode("\n", [
+                '<b>Userbot berhasil dibuat.</b>',
+                '',
+                'Akun Telegram kamu sudah terhubung.',
+                'Langkah berikutnya: kita akan tambahkan menu untuk memasukkan link grup tujuan.',
+            ]), ['parse_mode' => 'HTML']);
+
+            return true;
+        }
+
+        $account->fresh()->update([
+            'auth_status' => 'awaiting_code',
+            'last_error' => $result['error'] ?: $result['output'],
+        ]);
+
+        $telegram->sendMessage($account->bot_chat_id, implode("\n", [
+            '<b>Login belum berhasil.</b>',
+            '',
+            'Kode OTP mungkin salah atau sudah kedaluwarsa. Kirim ulang kode OTP yang terbaru.',
+        ]), ['parse_mode' => 'HTML']);
+
+        return true;
+    }
+
+    protected function handleTwoFactorPassword(
+        TelegramClientAccount $account,
+        string $text,
+        TelegramBotService $telegram,
+        PyrogramWorkerService $pyrogram
+    ): bool {
+        $telegram->sendMessage($account->bot_chat_id, 'Password diterima. Sedang menyelesaikan login...');
+
+        $result = $pyrogram->signIn($account, '', $text);
+
+        if ($result['ok']) {
+            $account->fresh()->update([
+                'auth_status' => 'authorized',
+                'last_error' => null,
+                'last_login_at' => now(),
+                'last_seen_at' => now(),
+            ]);
+
+            $telegram->sendMessage($account->bot_chat_id, '<b>Userbot berhasil dibuat.</b>', [
+                'parse_mode' => 'HTML',
+            ]);
+
+            return true;
+        }
+
+        $account->fresh()->update([
+            'auth_status' => 'awaiting_password',
+            'last_error' => $result['error'] ?: $result['output'],
+        ]);
+
+        $telegram->sendMessage($account->bot_chat_id, 'Password 2FA belum cocok. Coba kirim ulang password yang benar.');
+
+        return true;
     }
 
     protected function registerClientAccount(string $chatId, array $from): TelegramClientAccount
@@ -102,6 +391,47 @@ class TelegramWebhookController extends Controller
         $account->save();
 
         return $account;
+    }
+
+    protected function findOrRegisterClientAccount(string $chatId, array $from): TelegramClientAccount
+    {
+        return TelegramClientAccount::where('bot_chat_id', $chatId)->first()
+            ?? $this->registerClientAccount($chatId, $from);
+    }
+
+    protected function normalizePhoneNumber(string $text): ?string
+    {
+        $phoneNumber = preg_replace('/[^\d+]+/', '', trim($text));
+
+        if ($phoneNumber === null || $phoneNumber === '') {
+            return null;
+        }
+
+        if (str_starts_with($phoneNumber, '0')) {
+            $phoneNumber = '+62' . substr($phoneNumber, 1);
+        } elseif (!str_starts_with($phoneNumber, '+')) {
+            $phoneNumber = '+' . ltrim($phoneNumber, '0');
+        }
+
+        if (!preg_match('/^\+[1-9]\d{7,14}$/', $phoneNumber)) {
+            return null;
+        }
+
+        return $phoneNumber;
+    }
+
+    protected function requestPhoneMessage(): string
+    {
+        return implode("\n", [
+            '<b>Buat Userbot</b>',
+            '',
+            'Kirim nomor Telegram yang ingin kamu hubungkan.',
+            '',
+            'Format wajib pakai kode negara.',
+            'Contoh: <code>+6281234567890</code>',
+            '',
+            'Setelah itu Telegram akan mengirim kode OTP ke akun tersebut, lalu kamu kirim kode OTP-nya ke bot ini.',
+        ]);
     }
 
     protected function welcomeMessage(): string

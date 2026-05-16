@@ -22,6 +22,17 @@ class TelegramBotService
         ], $extra))->json();
     }
 
+    public function answerCallbackQuery(string $callbackQueryId, ?string $text = null, array $extra = [])
+    {
+        $payload = ['callback_query_id' => $callbackQueryId];
+
+        if ($text !== null) {
+            $payload['text'] = $text;
+        }
+
+        return Http::post("{$this->baseUrl}/answerCallbackQuery", array_merge($payload, $extra))->json();
+    }
+
     public function setWebhook(string $url, ?string $secretToken = null)
     {
         $payload = ['url' => $url];

@@ -1,10 +1,11 @@
 [phases.setup]
-nixPkgs = ["php82", "php82Packages.composer", "nodejs_22", "npm"]
+nixPkgs = ["php82", "php82Packages.composer", "nodejs_22", "npm", "python311"]
 
 [phases.install]
 cmds = [
     "composer install --no-dev --optimize-autoloader",
-    "npm ci"
+    "npm ci",
+    "python -m pip install -r userbot_worker/requirements.txt"
 ]
 
 [phases.build]

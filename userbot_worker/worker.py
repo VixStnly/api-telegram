@@ -119,28 +119,31 @@ def sign_in(account_id: int, code: str, password: str | None = None) -> None:
 
         try:
             with client_for(account, config) as app:
-                try:
-                    app.sign_in(
-                        phone_number=account["phone_number"],
-                        phone_code_hash=account["phone_code_hash"],
-                        phone_code=code,
-                    )
-                except SessionPasswordNeeded:
-                    if not password:
-                        execute(
-                            conn,
-                            """
-                            update telegram_client_accounts
-                            set auth_status = 'awaiting_password',
-                                updated_at = now()
-                            where id = %s
-                            """,
-                            (account_id,),
-                        )
-                        print("password_required")
-                        return
-
+                if password and not code:
                     app.check_password(password)
+                else:
+                    try:
+                        app.sign_in(
+                            phone_number=account["phone_number"],
+                            phone_code_hash=account["phone_code_hash"],
+                            phone_code=code,
+                        )
+                    except SessionPasswordNeeded:
+                        if not password:
+                            execute(
+                                conn,
+                                """
+                                update telegram_client_accounts
+                                set auth_status = 'awaiting_password',
+                                    updated_at = now()
+                                where id = %s
+                                """,
+                                (account_id,),
+                            )
+                            print("password_required")
+                            return
+
+                        app.check_password(password)
 
                 me = app.get_me()
 
