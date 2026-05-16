@@ -9,6 +9,7 @@ use App\Services\PyrogramWorkerService;
 use App\Services\TelegramBotService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 class TelegramWebhookController extends Controller
@@ -29,154 +30,184 @@ class TelegramWebhookController extends Controller
             ], 403);
         }
 
-        $update = $request->all();
-        $callbackQuery = $update['callback_query'] ?? null;
+        try {
+            $update = $request->all();
+            $callbackQuery = $update['callback_query'] ?? null;
 
-        if ($callbackQuery) {
-            $this->handleCallbackQuery($callbackQuery, $telegram);
+            if ($callbackQuery) {
+                $this->handleCallbackQuery($callbackQuery, $telegram);
 
-            return response()->json(['ok' => true]);
-        }
+                return response()->json(['ok' => true]);
+            }
 
-        $message = $update['message'] ?? null;
+            $message = $update['message'] ?? null;
 
-        if (!$message) {
-            return response()->json(['ok' => true]);
-        }
+            if (! $message) {
+                return response()->json(['ok' => true]);
+            }
 
-        $chat = $message['chat'] ?? [];
-        $from = $message['from'] ?? [];
-        $text = trim((string) ($message['text'] ?? ''));
-        $chatId = (string) ($chat['id'] ?? '');
+            $chat = $message['chat'] ?? [];
+            $from = $message['from'] ?? [];
+            $text = trim((string) ($message['text'] ?? ''));
+            $chatId = (string) ($chat['id'] ?? '');
 
-        if (in_array(($chat['type'] ?? ''), ['group', 'supergroup', 'channel'])) {
-            TelegramGroup::updateOrCreate(
-                ['chat_id' => $chatId],
-                [
-                    'title' => $chat['title'] ?? null,
-                    'username' => $chat['username'] ?? null,
-                    'type' => $chat['type'] ?? null,
-                    'is_active' => true,
-                    'is_allowed_for_broadcast' => true,
-                    'last_seen_at' => now(),
-                    'meta' => [
-                        'raw_chat' => $chat,
-                    ],
-                ]
-            );
-        }
+            if (in_array(($chat['type'] ?? ''), ['group', 'supergroup', 'channel'])) {
+                TelegramGroup::updateOrCreate(
+                    ['chat_id' => $chatId],
+                    [
+                        'title' => $chat['title'] ?? null,
+                        'username' => $chat['username'] ?? null,
+                        'type' => $chat['type'] ?? null,
+                        'is_active' => true,
+                        'is_allowed_for_broadcast' => true,
+                        'last_seen_at' => now(),
+                        'meta' => [
+                            'raw_chat' => $chat,
+                        ],
+                    ]
+                );
+            }
 
-        if ($text === '/start' && $chatId !== '') {
-            $account = $this->registerClientAccount($chatId, $from);
-            $account->update([
-                'auth_status' => 'idle',
-                'phone_code_hash' => null,
-                'pending_session_string' => null,
-                'last_error' => null,
+            if ($text === '/start' && $chatId !== '') {
+                $account = $this->registerClientAccount($chatId, $from);
+                $account->update([
+                    'auth_status' => 'idle',
+                    'phone_code_hash' => null,
+                    'pending_otp_code' => null,
+                    'pending_session_string' => null,
+                    'pending_login_token' => null,
+                    'last_error' => null,
+                ]);
+
+                $telegram->sendMessage($chatId, $this->welcomeMessage(), [
+                    'parse_mode' => 'HTML',
+                    'reply_markup' => $this->welcomeKeyboard(),
+                ]);
+
+                return response()->json(['ok' => true]);
+            }
+
+            if ($text === '/debug_userbot' && $chatId !== '') {
+                $account = TelegramClientAccount::where('bot_chat_id', $chatId)->first();
+
+                if (! $account) {
+                    $telegram->sendMessage($chatId, 'Belum ada data userbot untuk chat ini.');
+
+                    return response()->json(['ok' => true]);
+                }
+
+                $telegram->sendMessage($chatId, implode("\n", [
+                    '<b>Debug Userbot</b>',
+                    '',
+                    'Status: <code>'.e($account->auth_status).'</code>',
+                    'Nomor: <code>'.e($account->phone_number ?? '-').'</code>',
+                    'Session: <code>'.e($account->session_name).'</code>',
+                    'Code Hash: <code>'.e($account->phone_code_hash ? 'ada ('.strlen($account->phone_code_hash).')' : '-').'</code>',
+                    'Pending Session: <code>'.e($account->pending_session_string ? 'ada ('.strlen($account->pending_session_string).')' : '-').'</code>',
+                    'Login Token: <code>'.e($account->pending_login_token ? Str::limit($account->pending_login_token, 8, '') : '-').'</code>',
+                    'OTP URL: <code>'.e($account->pending_login_token ? $this->otpUrl($account) : '-').'</code>',
+                    'Error: <code>'.e($account->last_error ?? '-').'</code>',
+                ]), ['parse_mode' => 'HTML']);
+
+                return response()->json(['ok' => true]);
+            }
+
+            if ($text === '/debug_worker' && $chatId !== '') {
+                $result = $pyrogram->debug();
+
+                $telegram->sendMessage($chatId, implode("\n", [
+                    '<b>Debug Worker</b>',
+                    '',
+                    'OK: <code>'.($result['ok'] ? 'yes' : 'no').'</code>',
+                    'Python: <code>'.e($result['python'] ?? '-').'</code>',
+                    'Output: <code>'.e($result['output'] ?: '-').'</code>',
+                    'Error: <code>'.e(Str::limit($result['error'] ?: '-', 700)).'</code>',
+                ]), ['parse_mode' => 'HTML']);
+
+                return response()->json(['ok' => true]);
+            }
+
+            if ($text === '/debug_login' && $chatId !== '') {
+                $account = TelegramClientAccount::where('bot_chat_id', $chatId)->first();
+
+                if (! $account) {
+                    $telegram->sendMessage($chatId, 'Belum ada data login untuk chat ini.');
+
+                    return response()->json(['ok' => true]);
+                }
+
+                $logPath = storage_path('logs/userbot-login-'.$account->id.'.log');
+                $log = is_file($logPath) ? file_get_contents($logPath) : 'Log belum ada.';
+                $log = Str::limit(trim((string) $log), 2500);
+
+                $telegram->sendMessage($chatId, implode("\n", [
+                    '<b>Debug Login</b>',
+                    '',
+                    'Account ID: <code>'.e((string) $account->id).'</code>',
+                    'Status: <code>'.e($account->auth_status).'</code>',
+                    'Laravel DB: <code>'.e(config('database.default').'/'.DB::connection()->getDatabaseName()).'</code>',
+                    'Last Error: <code>'.e($account->last_error ?? '-').'</code>',
+                    '',
+                    '<b>Worker Log</b>',
+                    '<code>'.e($log ?: '-').'</code>',
+                ]), ['parse_mode' => 'HTML']);
+
+                return response()->json(['ok' => true]);
+            }
+
+            if ($chatId !== '' && ($chat['type'] ?? '') === 'private') {
+                $account = $this->findOrRegisterClientAccount($chatId, $from);
+
+                if ($this->handleOnboardingMessage($account, $text, $telegram, $pyrogram)) {
+                    return response()->json(['ok' => true]);
+                }
+            }
+
+            $result = $engine->process([
+                'managed_device_id' => null,
+                'group_key' => $chatId,
+                'group_name' => $chat['title'] ?? null,
+                'sender_key' => (string) ($from['id'] ?? ''),
+                'sender_name' => trim(($from['first_name'] ?? '').' '.($from['last_name'] ?? '')),
+                'message_text' => $text,
+                'meta' => [
+                    'source' => 'telegram_bot',
+                    'telegram_update' => $update,
+                ],
             ]);
 
-            $telegram->sendMessage($chatId, $this->welcomeMessage(), [
-                'parse_mode' => 'HTML',
-                'reply_markup' => $this->welcomeKeyboard(),
+            if (! empty($result['replied']) && ! empty($result['reply_text']) && ! empty($chat['id'])) {
+                $telegram->sendMessage($chat['id'], $result['reply_text']);
+            }
+
+            return response()->json(['ok' => true]);
+        } catch (\Throwable $e) {
+            Log::error('Telegram webhook failed', [
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'update' => $request->all(),
             ]);
 
-            return response()->json(['ok' => true]);
-        }
+            $fallbackChatId = (string) (data_get($request->all(), 'message.chat.id')
+                ?? data_get($request->all(), 'callback_query.message.chat.id')
+                ?? '');
 
-        if ($text === '/debug_userbot' && $chatId !== '') {
-            $account = TelegramClientAccount::where('bot_chat_id', $chatId)->first();
-
-            if (!$account) {
-                $telegram->sendMessage($chatId, 'Belum ada data userbot untuk chat ini.');
-
-                return response()->json(['ok' => true]);
+            if ($fallbackChatId !== '') {
+                try {
+                    $telegram->sendMessage($fallbackChatId, implode("\n", [
+                        '<b>Sistem sedang diproses ulang.</b>',
+                        '',
+                        'Coba kirim <code>/start</code> lagi beberapa detik lagi.',
+                    ]), ['parse_mode' => 'HTML']);
+                } catch (\Throwable $sendError) {
+                    Log::error('Telegram webhook fallback message failed', [
+                        'message' => $sendError->getMessage(),
+                    ]);
+                }
             }
 
-            $telegram->sendMessage($chatId, implode("\n", [
-                '<b>Debug Userbot</b>',
-                '',
-                'Status: <code>' . e($account->auth_status) . '</code>',
-                'Nomor: <code>' . e($account->phone_number ?? '-') . '</code>',
-                'Session: <code>' . e($account->session_name) . '</code>',
-                'Code Hash: <code>' . e($account->phone_code_hash ? 'ada (' . strlen($account->phone_code_hash) . ')' : '-') . '</code>',
-                'Pending Session: <code>' . e($account->pending_session_string ? 'ada (' . strlen($account->pending_session_string) . ')' : '-') . '</code>',
-                'Login Token: <code>' . e($account->pending_login_token ? Str::limit($account->pending_login_token, 8, '') : '-') . '</code>',
-                'OTP URL: <code>' . e($account->pending_login_token ? $this->otpUrl($account) : '-') . '</code>',
-                'Error: <code>' . e($account->last_error ?? '-') . '</code>',
-            ]), ['parse_mode' => 'HTML']);
-
             return response()->json(['ok' => true]);
         }
-
-        if ($text === '/debug_worker' && $chatId !== '') {
-            $result = $pyrogram->debug();
-
-            $telegram->sendMessage($chatId, implode("\n", [
-                '<b>Debug Worker</b>',
-                '',
-                'OK: <code>' . ($result['ok'] ? 'yes' : 'no') . '</code>',
-                'Python: <code>' . e($result['python'] ?? '-') . '</code>',
-                'Output: <code>' . e($result['output'] ?: '-') . '</code>',
-                'Error: <code>' . e(Str::limit($result['error'] ?: '-', 700)) . '</code>',
-            ]), ['parse_mode' => 'HTML']);
-
-            return response()->json(['ok' => true]);
-        }
-
-        if ($text === '/debug_login' && $chatId !== '') {
-            $account = TelegramClientAccount::where('bot_chat_id', $chatId)->first();
-
-            if (!$account) {
-                $telegram->sendMessage($chatId, 'Belum ada data login untuk chat ini.');
-
-                return response()->json(['ok' => true]);
-            }
-
-            $logPath = storage_path('logs/userbot-login-' . $account->id . '.log');
-            $log = is_file($logPath) ? file_get_contents($logPath) : 'Log belum ada.';
-            $log = Str::limit(trim((string) $log), 2500);
-
-            $telegram->sendMessage($chatId, implode("\n", [
-                '<b>Debug Login</b>',
-                '',
-                'Account ID: <code>' . e((string) $account->id) . '</code>',
-                'Status: <code>' . e($account->auth_status) . '</code>',
-                'Laravel DB: <code>' . e(config('database.default') . '/' . DB::connection()->getDatabaseName()) . '</code>',
-                'Last Error: <code>' . e($account->last_error ?? '-') . '</code>',
-                '',
-                '<b>Worker Log</b>',
-                '<code>' . e($log ?: '-') . '</code>',
-            ]), ['parse_mode' => 'HTML']);
-
-            return response()->json(['ok' => true]);
-        }
-
-        if ($chatId !== '' && ($chat['type'] ?? '') === 'private') {
-            $account = $this->findOrRegisterClientAccount($chatId, $from);
-
-            if ($this->handleOnboardingMessage($account, $text, $telegram, $pyrogram)) {
-                return response()->json(['ok' => true]);
-            }
-        }
-
-        $result = $engine->process([
-            'managed_device_id' => null,
-            'group_key' => $chatId,
-            'group_name' => $chat['title'] ?? null,
-            'sender_key' => (string) ($from['id'] ?? ''),
-            'sender_name' => trim(($from['first_name'] ?? '') . ' ' . ($from['last_name'] ?? '')),
-            'message_text' => $text,
-            'meta' => [
-                'source' => 'telegram_bot',
-                'telegram_update' => $update,
-            ],
-        ]);
-
-        if (!empty($result['replied']) && !empty($result['reply_text']) && !empty($chat['id'])) {
-            $telegram->sendMessage($chat['id'], $result['reply_text']);
-        }
-
-        return response()->json(['ok' => true]);
     }
 
     protected function handleCallbackQuery(array $callbackQuery, TelegramBotService $telegram): void
@@ -286,6 +317,15 @@ class TelegramWebhookController extends Controller
             return true;
         }
 
+        if ($account->auth_status === 'idle') {
+            $telegram->sendMessage($account->bot_chat_id, $this->welcomeMessage(), [
+                'parse_mode' => 'HTML',
+                'reply_markup' => $this->welcomeKeyboard(),
+            ]);
+
+            return true;
+        }
+
         return false;
     }
 
@@ -297,7 +337,7 @@ class TelegramWebhookController extends Controller
     ): bool {
         $phoneNumber = $this->normalizePhoneNumber($text);
 
-        if (!$phoneNumber) {
+        if (! $phoneNumber) {
             $telegram->sendMessage($account->bot_chat_id, implode("\n", [
                 '<b>Format nomor belum valid.</b>',
                 '',
@@ -331,16 +371,16 @@ class TelegramWebhookController extends Controller
         $result = $pyrogram->startLoginFlow($account->fresh(), $loginToken);
 
         if ($result['ok']) {
-        $telegram->sendMessage($account->bot_chat_id, implode("\n", [
-            '<b>Permintaan login sedang diproses.</b>',
-            '',
-            'Tunggu kode OTP dari Telegram. Setelah kode masuk, buka halaman input OTP lewat tombol di bawah.',
-            '',
-            'Jangan kirim kode OTP langsung di chat bot.',
-        ]), [
-            'parse_mode' => 'HTML',
-            'reply_markup' => $this->otpLinkKeyboard($account->fresh()),
-        ]);
+            $telegram->sendMessage($account->bot_chat_id, implode("\n", [
+                '<b>Permintaan login sedang diproses.</b>',
+                '',
+                'Tunggu kode OTP dari Telegram. Setelah kode masuk, buka halaman input OTP lewat tombol di bawah.',
+                '',
+                'Jangan kirim kode OTP langsung di chat bot.',
+            ]), [
+                'parse_mode' => 'HTML',
+                'reply_markup' => $this->otpLinkKeyboard($account->fresh()),
+            ]);
 
             return true;
         }
@@ -432,8 +472,8 @@ class TelegramWebhookController extends Controller
     {
         $account = TelegramClientAccount::firstOrNew(['bot_chat_id' => $chatId]);
 
-        if (!$account->exists) {
-            $account->session_name = 'client_' . Str::slug($chatId) . '_' . Str::lower(Str::random(8));
+        if (! $account->exists) {
+            $account->session_name = 'client_'.Str::slug($chatId).'_'.Str::lower(Str::random(8));
             $account->auth_status = 'idle';
         }
 
@@ -464,12 +504,12 @@ class TelegramWebhookController extends Controller
         }
 
         if (str_starts_with($phoneNumber, '0')) {
-            $phoneNumber = '+62' . substr($phoneNumber, 1);
-        } elseif (!str_starts_with($phoneNumber, '+')) {
-            $phoneNumber = '+' . ltrim($phoneNumber, '0');
+            $phoneNumber = '+62'.substr($phoneNumber, 1);
+        } elseif (! str_starts_with($phoneNumber, '+')) {
+            $phoneNumber = '+'.ltrim($phoneNumber, '0');
         }
 
-        if (!preg_match('/^\+[1-9]\d{7,14}$/', $phoneNumber)) {
+        if (! preg_match('/^\+[1-9]\d{7,14}$/', $phoneNumber)) {
             return null;
         }
 
@@ -514,7 +554,7 @@ class TelegramWebhookController extends Controller
         $error = $important ?: implode("\n", array_slice($lines, -3));
         $error = Str::limit($error, 350);
 
-        return $label . ': <code>' . e($error) . '</code>';
+        return $label.': <code>'.e($error).'</code>';
     }
 
     protected function requestPhoneMessage(): string

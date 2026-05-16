@@ -165,4 +165,60 @@ class TelegramWebhookStartTest extends TestCase
             'auth_status' => 'sending_code',
         ]);
     }
+
+    public function test_phone_number_without_create_button_is_guided_to_menu(): void
+    {
+        config([
+            'services.telegram.bot_token' => 'testing-token',
+            'services.telegram.webhook_secret' => 'testing-secret',
+        ]);
+
+        Http::fake([
+            'https://api.telegram.org/bottesting-token/sendMessage' => Http::response(['ok' => true]),
+        ]);
+
+        Process::fake();
+
+        TelegramClientAccount::create([
+            'bot_chat_id' => '987654321',
+            'bot_user_id' => '987654321',
+            'session_name' => 'client_987654321_test',
+            'auth_status' => 'idle',
+            'is_active' => true,
+        ]);
+
+        $response = $this
+            ->withHeader('X-Telegram-Bot-Api-Secret-Token', 'testing-secret')
+            ->postJson('/telegram/webhook', [
+                'update_id' => 4,
+                'message' => [
+                    'message_id' => 13,
+                    'text' => '+6281234567890',
+                    'chat' => [
+                        'id' => 987654321,
+                        'type' => 'private',
+                    ],
+                    'from' => [
+                        'id' => 987654321,
+                        'is_bot' => false,
+                        'first_name' => 'Tester',
+                    ],
+                ],
+            ]);
+
+        $response->assertOk()->assertJson(['ok' => true]);
+
+        $this->assertDatabaseMissing('telegram_client_accounts', [
+            'bot_chat_id' => '987654321',
+            'phone_number' => '+6281234567890',
+        ]);
+
+        Process::assertNothingRan();
+
+        Http::assertSent(function ($request) {
+            return $request->url() === 'https://api.telegram.org/bottesting-token/sendMessage'
+                && str_contains($request['text'], 'Mulai dari menu dulu')
+                && ($request['reply_markup']['inline_keyboard'][0][0]['text'] ?? null) === 'Buat Userbot';
+        });
+    }
 }
