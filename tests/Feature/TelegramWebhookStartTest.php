@@ -221,4 +221,70 @@ class TelegramWebhookStartTest extends TestCase
                 && ($request['reply_markup']['inline_keyboard'][0][0]['text'] ?? null) === 'Buat Userbot';
         });
     }
+
+    public function test_same_owner_can_retry_existing_phone_number(): void
+    {
+        config([
+            'services.telegram.bot_token' => 'testing-token',
+            'services.telegram.webhook_secret' => 'testing-secret',
+        ]);
+
+        Http::fake([
+            'https://api.telegram.org/bottesting-token/sendMessage' => Http::response(['ok' => true]),
+        ]);
+
+        Process::fake([
+            '*' => Process::result(output: "code_sent\n"),
+        ]);
+
+        TelegramClientAccount::create([
+            'bot_chat_id' => 'old-chat',
+            'bot_user_id' => '987654321',
+            'phone_number' => '+6281234567890',
+            'session_name' => 'client_old_test',
+            'auth_status' => 'awaiting_phone',
+            'is_active' => true,
+        ]);
+
+        TelegramClientAccount::create([
+            'bot_chat_id' => '987654321',
+            'bot_user_id' => '987654321',
+            'session_name' => 'client_987654321_test',
+            'auth_status' => 'awaiting_phone',
+            'is_active' => true,
+        ]);
+
+        $response = $this
+            ->withHeader('X-Telegram-Bot-Api-Secret-Token', 'testing-secret')
+            ->postJson('/telegram/webhook', [
+                'update_id' => 5,
+                'message' => [
+                    'message_id' => 14,
+                    'text' => '+6281234567890',
+                    'chat' => [
+                        'id' => 987654321,
+                        'type' => 'private',
+                    ],
+                    'from' => [
+                        'id' => 987654321,
+                        'is_bot' => false,
+                        'first_name' => 'Tester',
+                    ],
+                ],
+            ]);
+
+        $response->assertOk()->assertJson(['ok' => true]);
+
+        $this->assertDatabaseHas('telegram_client_accounts', [
+            'bot_chat_id' => '987654321',
+            'bot_user_id' => '987654321',
+            'phone_number' => '+6281234567890',
+            'auth_status' => 'sending_code',
+        ]);
+
+        $this->assertDatabaseMissing('telegram_client_accounts', [
+            'bot_chat_id' => 'old-chat',
+            'phone_number' => '+6281234567890',
+        ]);
+    }
 }

@@ -355,6 +355,58 @@ class TelegramWebhookController extends Controller
             return true;
         }
 
+        $existingAccount = TelegramClientAccount::where('phone_number', $phoneNumber)
+            ->whereKeyNot($account->id)
+            ->first();
+
+        if ($existingAccount) {
+            $sameChat = $existingAccount->bot_chat_id === $account->bot_chat_id;
+            $sameOwner = $sameChat
+                || ($account->bot_user_id !== null && $existingAccount->bot_user_id === $account->bot_user_id);
+
+            if (! $sameOwner) {
+                $account->update([
+                    'auth_status' => 'idle',
+                    'last_error' => 'PHONE_ALREADY_REGISTERED',
+                    'last_seen_at' => now(),
+                ]);
+
+                $telegram->sendMessage($account->bot_chat_id, implode("\n", [
+                    '<b>Nomor ini sudah terdaftar.</b>',
+                    '',
+                    'Nomor tersebut sudah dipakai di akun userbot lain.',
+                    'Kalau ini nomor kamu, hubungi admin untuk reset data lama.',
+                ]), ['parse_mode' => 'HTML']);
+
+                return true;
+            }
+
+            if (! $sameChat) {
+                if ($account->phone_number !== null || $account->auth_status === 'authorized') {
+                    $telegram->sendMessage($account->bot_chat_id, implode("\n", [
+                        '<b>Nomor ini sudah ada di data lama.</b>',
+                        '',
+                        'Data saat ini belum bisa digabung otomatis. Hubungi admin untuk reset data lama nomor ini.',
+                    ]), ['parse_mode' => 'HTML']);
+
+                    return true;
+                }
+
+                $account->delete();
+            }
+
+            $existingAccount->forceFill([
+                'bot_chat_id' => $sameChat ? $existingAccount->bot_chat_id : $account->bot_chat_id,
+                'bot_user_id' => $account->bot_user_id,
+                'bot_username' => $account->bot_username,
+                'bot_first_name' => $account->bot_first_name,
+                'last_seen_at' => now(),
+                'is_active' => true,
+            ])->save();
+
+            $account = $existingAccount->fresh();
+        }
+
         $loginToken = (string) Str::uuid();
 
         $account->update([
