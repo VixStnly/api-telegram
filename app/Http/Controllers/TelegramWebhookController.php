@@ -445,6 +445,8 @@ class TelegramWebhookController extends Controller
     protected function formatWorkerErrorForTelegram(array $result): string
     {
         $error = trim((string) ($result['error'] ?: $result['output'] ?: 'Tidak ada detail error.'));
+        $lines = array_values(array_filter(array_map('trim', preg_split('/\r\n|\r|\n/', $error) ?: [])));
+        $error = implode("\n", array_slice($lines, -8));
         $error = Str::limit($error, 700);
 
         return 'Detail: <code>' . e($error) . '</code>';
