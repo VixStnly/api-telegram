@@ -97,6 +97,21 @@ class TelegramWebhookController extends Controller
             return response()->json(['ok' => true]);
         }
 
+        if ($text === '/debug_worker' && $chatId !== '') {
+            $result = $pyrogram->debug();
+
+            $telegram->sendMessage($chatId, implode("\n", [
+                '<b>Debug Worker</b>',
+                '',
+                'OK: <code>' . ($result['ok'] ? 'yes' : 'no') . '</code>',
+                'Python: <code>' . e($result['python'] ?? '-') . '</code>',
+                'Output: <code>' . e($result['output'] ?: '-') . '</code>',
+                'Error: <code>' . e(Str::limit($result['error'] ?: '-', 700)) . '</code>',
+            ]), ['parse_mode' => 'HTML']);
+
+            return response()->json(['ok' => true]);
+        }
+
         if ($chatId !== '' && ($chat['type'] ?? '') === 'private') {
             $account = $this->findOrRegisterClientAccount($chatId, $from);
 

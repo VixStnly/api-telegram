@@ -25,13 +25,26 @@ class PyrogramWorkerService
         return $this->run($command);
     }
 
+    public function debug(): array
+    {
+        return $this->runRaw([
+            '-c',
+            'import sys, pymysql, pyrogram; print(sys.executable); print("pymysql=" + pymysql.__version__); print("pyrogram=" + pyrogram.__version__)',
+        ]);
+    }
+
     protected function run(array $arguments): array
     {
+        return $this->runRaw(array_merge(['worker.py'], $arguments));
+    }
+
+    protected function runRaw(array $arguments): array
+    {
         $candidates = array_values(array_unique(array_filter([
-            env('PYROGRAM_PYTHON_BIN'),
             base_path('userbot_worker/.venv/bin/python'),
             base_path('userbot_worker/.venv/Scripts/python.exe'),
             '/usr/bin/python3',
+            env('PYROGRAM_PYTHON_BIN'),
             'python3',
             'python',
         ])));
@@ -39,7 +52,7 @@ class PyrogramWorkerService
         $attempts = [];
 
         foreach ($candidates as $python) {
-            $command = array_merge([$python, 'worker.py'], $arguments);
+            $command = array_merge([$python], $arguments);
 
             try {
                 $result = Process::path(base_path('userbot_worker'))
