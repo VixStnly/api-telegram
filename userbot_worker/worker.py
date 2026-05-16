@@ -79,8 +79,12 @@ def send_code(account_id: int) -> None:
         if not account or not account.get("phone_number"):
             raise RuntimeError("Account not found or phone_number is empty")
 
-        with client_for(account, config) as app:
+        app = client_for(account, config)
+        app.connect()
+        try:
             sent_code = app.send_code(account["phone_number"])
+        finally:
+            app.disconnect()
 
         execute(
             conn,
@@ -118,7 +122,9 @@ def sign_in(account_id: int, code: str, password: str | None = None) -> None:
             raise RuntimeError("phone_code_hash is empty. Run send-code first.")
 
         try:
-            with client_for(account, config) as app:
+            app = client_for(account, config)
+            app.connect()
+            try:
                 if password and not code:
                     app.check_password(password)
                 else:
@@ -146,6 +152,8 @@ def sign_in(account_id: int, code: str, password: str | None = None) -> None:
                         app.check_password(password)
 
                 me = app.get_me()
+            finally:
+                app.disconnect()
 
             execute(
                 conn,

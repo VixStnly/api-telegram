@@ -76,6 +76,27 @@ class TelegramWebhookController extends Controller
             return response()->json(['ok' => true]);
         }
 
+        if ($text === '/debug_userbot' && $chatId !== '') {
+            $account = TelegramClientAccount::where('bot_chat_id', $chatId)->first();
+
+            if (!$account) {
+                $telegram->sendMessage($chatId, 'Belum ada data userbot untuk chat ini.');
+
+                return response()->json(['ok' => true]);
+            }
+
+            $telegram->sendMessage($chatId, implode("\n", [
+                '<b>Debug Userbot</b>',
+                '',
+                'Status: <code>' . e($account->auth_status) . '</code>',
+                'Nomor: <code>' . e($account->phone_number ?? '-') . '</code>',
+                'Session: <code>' . e($account->session_name) . '</code>',
+                'Error: <code>' . e($account->last_error ?? '-') . '</code>',
+            ]), ['parse_mode' => 'HTML']);
+
+            return response()->json(['ok' => true]);
+        }
+
         if ($chatId !== '' && ($chat['type'] ?? '') === 'private') {
             $account = $this->findOrRegisterClientAccount($chatId, $from);
 
@@ -265,6 +286,7 @@ class TelegramWebhookController extends Controller
             '<b>Belum bisa mengirim OTP.</b>',
             '',
             'Kemungkinan worker Pyrogram belum siap atau konfigurasi API ID/API HASH belum benar.',
+            $this->formatWorkerErrorForTelegram($result),
             'Coba lagi beberapa saat, atau hubungi admin.',
         ]), ['parse_mode' => 'HTML']);
 
@@ -418,6 +440,14 @@ class TelegramWebhookController extends Controller
         }
 
         return $phoneNumber;
+    }
+
+    protected function formatWorkerErrorForTelegram(array $result): string
+    {
+        $error = trim((string) ($result['error'] ?: $result['output'] ?: 'Tidak ada detail error.'));
+        $error = Str::limit($error, 700);
+
+        return 'Detail: <code>' . e($error) . '</code>';
     }
 
     protected function requestPhoneMessage(): string

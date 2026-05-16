@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\TelegramClientAccount;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Process;
 
 class PyrogramWorkerService
@@ -32,6 +33,15 @@ class PyrogramWorkerService
         $result = Process::path(base_path('userbot_worker'))
             ->timeout(120)
             ->run($command);
+
+        if ($result->failed()) {
+            Log::warning('Pyrogram worker failed', [
+                'arguments' => $arguments,
+                'exit_code' => $result->exitCode(),
+                'output' => trim($result->output()),
+                'error' => trim($result->errorOutput()),
+            ]);
+        }
 
         return [
             'ok' => $result->successful(),
