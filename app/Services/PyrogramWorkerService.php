@@ -10,19 +10,33 @@ class PyrogramWorkerService
 {
     public function sendCode(TelegramClientAccount $account): array
     {
-        return $this->run(['send-code', (string) $account->id]);
+        $result = $this->run([
+            'send-code-direct',
+            (string) $account->phone_number,
+            (string) $account->session_name,
+        ]);
+
+        return $this->withJsonData($result);
     }
 
     public function signIn(TelegramClientAccount $account, string $code, ?string $password = null): array
     {
-        $command = ['sign-in', (string) $account->id, $code];
+        $command = [
+            'sign-in-direct',
+            (string) $account->phone_number,
+            (string) $account->session_name,
+            (string) $account->phone_code_hash,
+            $code,
+        ];
 
         if ($password !== null) {
             $command[] = '--password';
             $command[] = $password;
         }
 
-        return $this->run($command);
+        $result = $this->run($command);
+
+        return $this->withJsonData($result);
     }
 
     public function debug(): array
@@ -125,6 +139,17 @@ class PyrogramWorkerService
             'MYSQL_URL' => env('MYSQL_URL'),
             'DATABASE_URL' => env('DATABASE_URL'),
         ], fn ($value) => $value !== null && $value !== '');
+    }
+
+    protected function withJsonData(array $result): array
+    {
+        $decoded = json_decode($result['output'] ?? '', true);
+
+        if (is_array($decoded)) {
+            $result['data'] = $decoded;
+        }
+
+        return $result;
     }
 
     protected function formatAttempts(array $attempts): string

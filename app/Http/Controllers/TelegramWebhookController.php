@@ -276,6 +276,8 @@ class TelegramWebhookController extends Controller
         if ($result['ok']) {
             $account->fresh()->update([
                 'auth_status' => 'awaiting_code',
+                'phone_code_hash' => $result['data']['phone_code_hash'] ?? null,
+                'session_file' => $result['data']['session_file'] ?? null,
                 'last_error' => null,
                 'last_seen_at' => now(),
             ]);
@@ -325,9 +327,9 @@ class TelegramWebhookController extends Controller
         $telegram->sendMessage($account->bot_chat_id, 'Kode diterima. Sedang mencoba login ke akun Telegram kamu...');
 
         $result = $pyrogram->signIn($account, $code);
-        $output = $result['output'];
+        $status = $result['data']['status'] ?? null;
 
-        if ($result['ok'] && str_contains($output, 'password_required')) {
+        if ($result['ok'] && $status === 'password_required') {
             $account->fresh()->update([
                 'auth_status' => 'awaiting_password',
                 'last_seen_at' => now(),
@@ -342,9 +344,10 @@ class TelegramWebhookController extends Controller
             return true;
         }
 
-        if ($result['ok']) {
+        if ($result['ok'] && $status === 'authorized') {
             $account->fresh()->update([
                 'auth_status' => 'authorized',
+                'bot_username' => $result['data']['telegram_username'] ?? $account->bot_username,
                 'last_error' => null,
                 'last_login_at' => now(),
                 'last_seen_at' => now(),
@@ -383,10 +386,12 @@ class TelegramWebhookController extends Controller
         $telegram->sendMessage($account->bot_chat_id, 'Password diterima. Sedang menyelesaikan login...');
 
         $result = $pyrogram->signIn($account, '', $text);
+        $status = $result['data']['status'] ?? null;
 
-        if ($result['ok']) {
+        if ($result['ok'] && $status === 'authorized') {
             $account->fresh()->update([
                 'auth_status' => 'authorized',
+                'bot_username' => $result['data']['telegram_username'] ?? $account->bot_username,
                 'last_error' => null,
                 'last_login_at' => now(),
                 'last_seen_at' => now(),

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import time
 from pathlib import Path
@@ -135,6 +136,26 @@ def send_code(account_id: int) -> None:
     print("code_sent")
 
 
+def send_code_direct(phone_number: str, session_name: str) -> None:
+    config = load_config()
+    account = {
+        "session_name": session_name,
+    }
+
+    app = client_for(account, config)
+    app.connect()
+    try:
+        sent_code = app.send_code(phone_number)
+    finally:
+        app.disconnect()
+
+    print(json.dumps({
+        "status": "code_sent",
+        "phone_code_hash": sent_code.phone_code_hash,
+        "session_file": str(SESSION_DIR / f"{session_name}.session"),
+    }))
+
+
 def sign_in(account_id: int, code: str, password: str | None = None) -> None:
     config = load_config()
 
@@ -212,6 +233,56 @@ def sign_in(account_id: int, code: str, password: str | None = None) -> None:
                 (str(exc), account_id),
             )
             raise
+
+
+def sign_in_direct(
+    phone_number: str,
+    session_name: str,
+    phone_code_hash: str,
+    code: str,
+    password: str | None = None,
+) -> None:
+    config = load_config()
+    account = {
+        "session_name": session_name,
+    }
+
+    try:
+        app = client_for(account, config)
+        app.connect()
+        try:
+            if password and not code:
+                app.check_password(password)
+            else:
+                try:
+                    app.sign_in(
+                        phone_number=phone_number,
+                        phone_code_hash=phone_code_hash,
+                        phone_code=code,
+                    )
+                except SessionPasswordNeeded:
+                    if not password:
+                        print(json.dumps({"status": "password_required"}))
+                        return
+
+                    app.check_password(password)
+
+            me = app.get_me()
+        finally:
+            app.disconnect()
+
+        print(json.dumps({
+            "status": "authorized",
+            "telegram_user_id": getattr(me, "id", None),
+            "telegram_username": getattr(me, "username", None),
+            "telegram_first_name": getattr(me, "first_name", None),
+        }))
+    except Exception as exc:
+        print(json.dumps({
+            "status": "error",
+            "error": str(exc),
+        }))
+        raise
 
 
 def target_for_group(group: dict[str, Any]) -> str:
@@ -377,10 +448,21 @@ def main() -> None:
     send_code_parser = subparsers.add_parser("send-code")
     send_code_parser.add_argument("account_id", type=int)
 
+    send_code_direct_parser = subparsers.add_parser("send-code-direct")
+    send_code_direct_parser.add_argument("phone_number")
+    send_code_direct_parser.add_argument("session_name")
+
     sign_in_parser = subparsers.add_parser("sign-in")
     sign_in_parser.add_argument("account_id", type=int)
     sign_in_parser.add_argument("code")
     sign_in_parser.add_argument("--password")
+
+    sign_in_direct_parser = subparsers.add_parser("sign-in-direct")
+    sign_in_direct_parser.add_argument("phone_number")
+    sign_in_direct_parser.add_argument("session_name")
+    sign_in_direct_parser.add_argument("phone_code_hash")
+    sign_in_direct_parser.add_argument("code")
+    sign_in_direct_parser.add_argument("--password")
 
     share_parser = subparsers.add_parser("share")
     share_parser.add_argument("share_id", type=int)
@@ -394,8 +476,18 @@ def main() -> None:
 
     if args.command == "send-code":
         send_code(args.account_id)
+    elif args.command == "send-code-direct":
+        send_code_direct(args.phone_number, args.session_name)
     elif args.command == "sign-in":
         sign_in(args.account_id, args.code, args.password)
+    elif args.command == "sign-in-direct":
+        sign_in_direct(
+            args.phone_number,
+            args.session_name,
+            args.phone_code_hash,
+            args.code,
+            args.password,
+        )
     elif args.command == "share":
         process_share(args.share_id, args.delay)
     elif args.command == "share-pending":
