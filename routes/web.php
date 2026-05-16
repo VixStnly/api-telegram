@@ -10,8 +10,10 @@ use App\Http\Controllers\AutoReplyTestWebController;
 use App\Http\Controllers\TelegramWebhookController;
 use Illuminate\Support\Facades\DB;
 use App\Models\User;
+
 Route::post('/telegram/webhook', [TelegramWebhookController::class, 'handle'])
     ->name('telegram.webhook');
+    
 Route::get('/', function () {
     return redirect()->route('login');
 });

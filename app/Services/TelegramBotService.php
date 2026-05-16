@@ -33,6 +33,11 @@ class TelegramBotService
         return Http::post("{$this->baseUrl}/setWebhook", $payload)->json();
     }
 
+    public function getWebhookInfo()
+    {
+        return Http::get("{$this->baseUrl}/getWebhookInfo")->json();
+    }
+
     public function getMe()
     {
         return Http::get("{$this->baseUrl}/getMe")->json();
