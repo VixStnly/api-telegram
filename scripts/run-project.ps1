@@ -76,9 +76,9 @@ try {
 
     if (Test-Path $workerPython) {
         Start-ProjectProcess `
-            -Name "Pyrogram share worker" `
+            -Name "Pyrogram !share watcher" `
             -FilePath $workerPython `
-            -Arguments "worker.py share-pending --limit 5 --delay $ShareDelay" `
+            -Arguments "worker.py watch-shares --delay $ShareDelay --refresh 30" `
             -WorkingDirectory $workerDir
     } else {
         Write-Host "Pyrogram worker skipped: userbot_worker\.venv not found yet."

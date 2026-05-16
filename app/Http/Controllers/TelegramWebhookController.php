@@ -156,6 +156,20 @@ class TelegramWebhookController extends Controller
                 return response()->json(['ok' => true]);
             }
 
+            if ($text === '/debug_share' && $chatId !== '') {
+                $logPath = storage_path('logs/userbot-share-watcher.log');
+                $log = is_file($logPath) ? file_get_contents($logPath) : 'Log watcher belum ada.';
+                $log = Str::limit(trim((string) $log), 2500);
+
+                $telegram->sendMessage($chatId, implode("\n", [
+                    '<b>Debug Share Watcher</b>',
+                    '',
+                    '<code>'.e($log ?: '-').'</code>',
+                ]), ['parse_mode' => 'HTML']);
+
+                return response()->json(['ok' => true]);
+            }
+
             if ($chatId !== '' && ($chat['type'] ?? '') === 'private') {
                 $account = $this->findOrRegisterClientAccount($chatId, $from);
 

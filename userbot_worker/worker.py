@@ -12,8 +12,9 @@ from urllib.parse import urlparse
 
 import pymysql
 from dotenv import load_dotenv
-from pyrogram import Client
+from pyrogram import Client, filters
 from pyrogram.errors import SessionPasswordNeeded
+from pyrogram.handlers import MessageHandler
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -731,6 +732,223 @@ def process_pending(limit: int, delay_seconds: float) -> None:
         process_share(int(share["id"]), delay_seconds)
 
 
+def create_share_record_from_reply(conn, account_id: int, message) -> int:
+    reply = message.reply_to_message
+    message_text = (
+        getattr(reply, "text", None)
+        or getattr(reply, "caption", None)
+        or "[copied telegram message]"
+    )
+
+    execute(
+        conn,
+        """
+        insert into share_messages
+            (telegram_client_account_id, requested_by_chat_id, message_text, status, started_at, created_at, updated_at, meta)
+        values (%s, %s, %s, 'running', now(), now(), now(), %s)
+        """,
+        (
+            account_id,
+            str(message.chat.id),
+            message_text,
+            json.dumps({
+                "source": "userbot_reply_command",
+                "command_chat_id": str(message.chat.id),
+                "command_message_id": getattr(message, "id", None),
+                "reply_message_id": getattr(reply, "id", None),
+            }),
+        ),
+    )
+
+    with conn.cursor() as cursor:
+        cursor.execute("select last_insert_id() as id")
+        return int(cursor.fetchone()["id"])
+
+
+def update_share_totals(conn, share_id: int, total: int, sent: int, failed: int, status: str) -> None:
+    execute(
+        conn,
+        """
+        update share_messages
+        set total_groups = %s,
+            sent_count = %s,
+            failed_count = %s,
+            status = %s,
+            completed_at = now(),
+            updated_at = now()
+        where id = %s
+        """,
+        (total, sent, failed, status, share_id),
+    )
+
+
+def command_text(message) -> str:
+    return (getattr(message, "text", None) or getattr(message, "caption", None) or "").strip()
+
+
+def notify_share_status(client: Client, message, text: str) -> None:
+    try:
+        client.send_message(
+            chat_id=message.chat.id,
+            text=text,
+            reply_to_message_id=message.id,
+        )
+    except Exception:
+        try:
+            client.send_message(message.chat.id, text)
+        except Exception:
+            pass
+
+
+def handle_share_command(client: Client, message, account_id: int, delay_seconds: float) -> None:
+    if command_text(message).lower() != "!share":
+        return
+
+    if not getattr(message, "reply_to_message", None):
+        notify_share_status(client, message, "Reply pesan yang mau dishare, lalu ketik !share.")
+        return
+
+    config = load_config()
+
+    with db_connect(config) as conn:
+        account = fetch_one(
+            conn,
+            "select * from telegram_client_accounts where id = %s limit 1",
+            (account_id,),
+        )
+
+        if not account or account["auth_status"] != "authorized":
+            notify_share_status(client, message, "Userbot belum authorized.")
+            return
+
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                select * from telegram_client_groups
+                where telegram_client_account_id = %s and status = 'active'
+                order by id asc
+                """,
+                (account_id,),
+            )
+            groups = cursor.fetchall()
+
+        if not groups:
+            notify_share_status(client, message, "Belum ada grup aktif. Pilih grup dulu dari menu Add Grup.")
+            return
+
+        share_id = create_share_record_from_reply(conn, account_id, message)
+        sent_count = 0
+        failed_count = 0
+
+        notify_share_status(client, message, f"Mulai share ke {len(groups)} grup...")
+
+        for group in groups:
+            delivery_id = create_delivery(conn, share_id, group)
+
+            try:
+                copied = client.copy_message(
+                    chat_id=target_for_group(group),
+                    from_chat_id=message.chat.id,
+                    message_id=message.reply_to_message.id,
+                )
+                sent_count += 1
+                execute(
+                    conn,
+                    """
+                    update share_message_deliveries
+                    set status = 'sent',
+                        telegram_message_id = %s,
+                        sent_at = now(),
+                        updated_at = now()
+                    where id = %s
+                    """,
+                    (str(copied.id), delivery_id),
+                )
+            except Exception as exc:
+                failed_count += 1
+                execute(
+                    conn,
+                    """
+                    update share_message_deliveries
+                    set status = 'failed',
+                        error_message = %s,
+                        updated_at = now()
+                    where id = %s
+                    """,
+                    (str(exc), delivery_id),
+                )
+
+            if delay_seconds > 0:
+                time.sleep(delay_seconds)
+
+        status = "sent" if failed_count == 0 else "partial"
+        if sent_count == 0:
+            status = "failed"
+
+        update_share_totals(conn, share_id, len(groups), sent_count, failed_count, status)
+
+    notify_share_status(
+        client,
+        message,
+        f"Share selesai. Berhasil: {sent_count}. Gagal: {failed_count}.",
+    )
+
+
+def watch_shares(delay_seconds: float = 5.0, refresh_seconds: int = 30) -> None:
+    config = load_config()
+    clients: dict[int, Client] = {}
+
+    print("share watcher started", flush=True)
+
+    while True:
+        with db_connect(config) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    select * from telegram_client_accounts
+                    where auth_status = 'authorized' and is_active = 1
+                    order by id asc
+                    """
+                )
+                accounts = cursor.fetchall()
+
+        active_ids = {int(account["id"]) for account in accounts}
+
+        for account_id, client in list(clients.items()):
+            if account_id not in active_ids:
+                print(f"stopping inactive userbot watcher account_id={account_id}", flush=True)
+                try:
+                    client.stop()
+                except Exception as exc:
+                    print(f"watcher stop failed account_id={account_id}: {exc}", flush=True)
+                clients.pop(account_id, None)
+
+        for account in accounts:
+            account_id = int(account["id"])
+
+            if account_id in clients:
+                continue
+
+            try:
+                client = client_for(account, config)
+                client.add_handler(MessageHandler(
+                    lambda client, message, account_id=account_id: handle_share_command(
+                        client,
+                        message,
+                        account_id,
+                        delay_seconds,
+                    ),
+                    filters.me & filters.text,
+                ))
+                client.start()
+                clients[account_id] = client
+                print(f"watching userbot account_id={account_id} phone={account.get('phone_number')}", flush=True)
+            except Exception as exc:
+                print(f"watcher start failed account_id={account_id}: {exc}", flush=True)
+
+        time.sleep(refresh_seconds)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Pyrogram worker for Telegram client accounts")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -770,6 +988,10 @@ def main() -> None:
     list_groups_parser = subparsers.add_parser("list-groups")
     list_groups_parser.add_argument("account_id", type=int)
 
+    watch_shares_parser = subparsers.add_parser("watch-shares")
+    watch_shares_parser.add_argument("--delay", type=float, default=5.0)
+    watch_shares_parser.add_argument("--refresh", type=int, default=30)
+
     args = parser.parse_args()
 
     if args.command == "send-code":
@@ -794,6 +1016,8 @@ def main() -> None:
         process_pending(args.limit, args.delay)
     elif args.command == "list-groups":
         list_groups(args.account_id)
+    elif args.command == "watch-shares":
+        watch_shares(args.delay, args.refresh)
 
 
 if __name__ == "__main__":
