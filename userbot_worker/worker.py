@@ -371,9 +371,9 @@ def login_flow(account_id: int, login_token: str, timeout_seconds: int = 300) ->
         clear_session_files(account["session_name"])
 
         app = client_for(account, config)
-        app.connect()
 
         try:
+            app.connect()
             sent_code = app.send_code(account["phone_number"])
             print("code sent by telegram", flush=True)
 
@@ -525,7 +525,10 @@ def login_flow(account_id: int, login_token: str, timeout_seconds: int = 300) ->
             ]))
             raise
         finally:
-            app.disconnect()
+            try:
+                app.disconnect()
+            except Exception:
+                pass
 
 
 def target_for_group(group: dict[str, Any]) -> str:

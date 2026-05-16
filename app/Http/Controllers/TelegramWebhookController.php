@@ -646,10 +646,16 @@ class TelegramWebhookController extends Controller
 
     protected function otpUrl(TelegramClientAccount $account): string
     {
-        return url()->route('telegram-login.show', [
+        $url = url()->route('telegram-login.show', [
             'account' => $account->id,
             'token' => $account->pending_login_token,
         ]);
+
+        if (str_starts_with($url, 'http://')) {
+            return 'https://'.substr($url, 7);
+        }
+
+        return $url;
     }
 
     protected function welcomeMessage(): string
