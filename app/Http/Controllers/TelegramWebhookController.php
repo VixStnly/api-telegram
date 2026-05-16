@@ -430,6 +430,35 @@ class TelegramWebhookController extends Controller
         $result = $pyrogram->startLoginFlow($account->fresh(), $loginToken);
 
         if ($result['ok']) {
+            $freshAccount = $this->waitForLoginWorkerStatus($account->fresh(), $loginToken);
+
+            if ($freshAccount && $freshAccount->last_error) {
+                $telegram->sendMessage($account->bot_chat_id, implode("\n", [
+                    '<b>Belum bisa meminta kode OTP.</b>',
+                    '',
+                    'Worker Pyrogram berhenti sebelum Telegram mengirim kode.',
+                    'Alasan: <code>'.e(Str::limit($freshAccount->last_error, 350)).'</code>',
+                    '',
+                    'Klik <b>Buat Userbot</b> untuk mencoba ulang.',
+                ]), ['parse_mode' => 'HTML']);
+
+                return true;
+            }
+
+            if ($freshAccount && $freshAccount->auth_status === 'awaiting_code') {
+                $telegram->sendMessage($account->bot_chat_id, implode("\n", [
+                    '<b>Kode OTP sudah diminta ke Telegram.</b>',
+                    '',
+                    'Kalau kode belum muncul, tunggu sebentar lalu cek aplikasi Telegram akun tersebut.',
+                    'Masukkan OTP lewat tombol di bawah.',
+                ]), [
+                    'parse_mode' => 'HTML',
+                    'reply_markup' => $this->otpLinkKeyboard($freshAccount),
+                ]);
+
+                return true;
+            }
+
             $telegram->sendMessage($account->bot_chat_id, implode("\n", [
                 '<b>Permintaan login sedang diproses.</b>',
                 '',
@@ -459,6 +488,27 @@ class TelegramWebhookController extends Controller
         ]), ['parse_mode' => 'HTML']);
 
         return true;
+    }
+
+    protected function waitForLoginWorkerStatus(TelegramClientAccount $account, string $loginToken): ?TelegramClientAccount
+    {
+        $deadline = microtime(true) + 6;
+
+        do {
+            $freshAccount = $account->fresh();
+
+            if (! $freshAccount || $freshAccount->pending_login_token !== $loginToken) {
+                return $freshAccount;
+            }
+
+            if ($freshAccount->auth_status !== 'sending_code' || $freshAccount->last_error) {
+                return $freshAccount;
+            }
+
+            usleep(500_000);
+        } while (microtime(true) < $deadline);
+
+        return $account->fresh();
     }
 
     protected function handleOtpCode(
