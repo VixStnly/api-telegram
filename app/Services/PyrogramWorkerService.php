@@ -43,6 +43,7 @@ class PyrogramWorkerService
 
             try {
                 $result = Process::path(base_path('userbot_worker'))
+                    ->env($this->workerEnvironment())
                     ->timeout(120)
                     ->run($command);
             } catch (\Throwable $e) {
@@ -94,6 +95,26 @@ class PyrogramWorkerService
             'python' => $lastAttempt['python'] ?? null,
             'attempts' => $attempts,
         ];
+    }
+
+    protected function workerEnvironment(): array
+    {
+        return array_filter([
+            'PYROGRAM_API_ID' => env('PYROGRAM_API_ID'),
+            'PYROGRAM_API_HASH' => env('PYROGRAM_API_HASH'),
+            'DB_HOST' => env('DB_HOST'),
+            'DB_PORT' => env('DB_PORT'),
+            'DB_DATABASE' => env('DB_DATABASE'),
+            'DB_USERNAME' => env('DB_USERNAME'),
+            'DB_PASSWORD' => env('DB_PASSWORD'),
+            'MYSQLHOST' => env('MYSQLHOST'),
+            'MYSQLPORT' => env('MYSQLPORT'),
+            'MYSQLDATABASE' => env('MYSQLDATABASE'),
+            'MYSQLUSER' => env('MYSQLUSER'),
+            'MYSQLPASSWORD' => env('MYSQLPASSWORD'),
+            'MYSQL_URL' => env('MYSQL_URL'),
+            'DATABASE_URL' => env('DATABASE_URL'),
+        ], fn ($value) => $value !== null && $value !== '');
     }
 
     protected function formatAttempts(array $attempts): string

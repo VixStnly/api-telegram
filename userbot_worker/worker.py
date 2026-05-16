@@ -5,6 +5,7 @@ import os
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import pymysql
 from dotenv import load_dotenv
@@ -28,21 +29,48 @@ def load_config() -> dict[str, Any]:
     return {
         "api_id": int(api_id),
         "api_hash": api_hash,
-        "db": {
-            "host": os.getenv("DB_HOST", "127.0.0.1"),
-            "port": int(os.getenv("DB_PORT", "3306")),
-            "user": os.getenv("DB_USERNAME", "root"),
-            "password": os.getenv("DB_PASSWORD", ""),
-            "database": os.getenv("DB_DATABASE", "telegram_autoreply_engine"),
+        "db": database_config(),
+    }
+
+
+def database_config() -> dict[str, Any]:
+    database_url = os.getenv("DATABASE_URL") or os.getenv("MYSQL_URL")
+
+    if database_url:
+        parsed = urlparse(database_url)
+
+        return {
+            "host": parsed.hostname or "127.0.0.1",
+            "port": parsed.port or 3306,
+            "user": parsed.username or "root",
+            "password": parsed.password or "",
+            "database": (parsed.path or "/").lstrip("/") or "telegram_autoreply_engine",
             "charset": "utf8mb4",
             "cursorclass": pymysql.cursors.DictCursor,
             "autocommit": True,
-        },
+            "connect_timeout": 15,
+        }
+
+    return {
+        "host": os.getenv("DB_HOST") or os.getenv("MYSQLHOST") or "127.0.0.1",
+        "port": int(os.getenv("DB_PORT") or os.getenv("MYSQLPORT") or "3306"),
+        "user": os.getenv("DB_USERNAME") or os.getenv("MYSQLUSER") or "root",
+        "password": os.getenv("DB_PASSWORD") or os.getenv("MYSQLPASSWORD") or "",
+        "database": os.getenv("DB_DATABASE") or os.getenv("MYSQLDATABASE") or "telegram_autoreply_engine",
+        "charset": "utf8mb4",
+        "cursorclass": pymysql.cursors.DictCursor,
+        "autocommit": True,
+        "connect_timeout": 15,
     }
 
 
 def db_connect(config: dict[str, Any]):
-    return pymysql.connect(**config["db"])
+    try:
+        return pymysql.connect(**config["db"])
+    except Exception as exc:
+        db = config["db"]
+        safe_target = f"{db.get('user')}@{db.get('host')}:{db.get('port')}/{db.get('database')}"
+        raise RuntimeError(f"Database connection failed for {safe_target}: {exc}") from exc
 
 
 def fetch_one(conn, query: str, params: tuple[Any, ...]) -> dict[str, Any] | None:
