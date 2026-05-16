@@ -20,6 +20,8 @@ class TelegramClientAccount extends Model
         'pending_session_string',
         'auth_status',
         'phone_code_hash',
+        'pending_otp_code',
+        'pending_otp_requested_at',
         'last_login_at',
         'last_seen_at',
         'subscription_expires_at',
@@ -31,6 +33,7 @@ class TelegramClientAccount extends Model
     protected $casts = [
         'last_login_at' => 'datetime',
         'last_seen_at' => 'datetime',
+        'pending_otp_requested_at' => 'datetime',
         'subscription_expires_at' => 'datetime',
         'is_active' => 'boolean',
         'meta' => 'array',

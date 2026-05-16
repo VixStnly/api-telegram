@@ -4,6 +4,8 @@ import argparse
 import json
 import os
 import time
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -83,6 +85,28 @@ def fetch_one(conn, query: str, params: tuple[Any, ...]) -> dict[str, Any] | Non
 def execute(conn, query: str, params: tuple[Any, ...]) -> None:
     with conn.cursor() as cursor:
         cursor.execute(query, params)
+
+
+def send_bot_message(chat_id: str, text: str) -> None:
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+
+    if not token:
+        return
+
+    payload = urllib.parse.urlencode({
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "HTML",
+    }).encode()
+
+    request = urllib.request.Request(
+        f"https://api.telegram.org/bot{token}/sendMessage",
+        data=payload,
+        method="POST",
+    )
+
+    with urllib.request.urlopen(request, timeout=20):
+        pass
 
 
 def client_for(account: dict[str, Any], config: dict[str, Any]) -> Client:
@@ -301,6 +325,165 @@ def sign_in_direct(
         raise
 
 
+def login_flow(account_id: int, timeout_seconds: int = 300) -> None:
+    config = load_config()
+
+    with db_connect(config) as conn:
+        account = fetch_one(
+            conn,
+            "select * from telegram_client_accounts where id = %s limit 1",
+            (account_id,),
+        )
+
+        if not account:
+            raise RuntimeError("Account not found")
+
+        if not account.get("phone_number"):
+            raise RuntimeError("phone_number is empty")
+
+        clear_session_files(account["session_name"])
+
+        app = client_for(account, config)
+        app.connect()
+
+        try:
+            sent_code = app.send_code(account["phone_number"])
+
+            execute(
+                conn,
+                """
+                update telegram_client_accounts
+                set auth_status = 'awaiting_code',
+                    phone_code_hash = %s,
+                    pending_otp_code = null,
+                    pending_otp_requested_at = now(),
+                    last_error = null,
+                    updated_at = now()
+                where id = %s
+                """,
+                (sent_code.phone_code_hash, account_id),
+            )
+
+            send_bot_message(account["bot_chat_id"], "\n".join([
+                "<b>Kode OTP sudah dikirim oleh Telegram.</b>",
+                "",
+                "Silakan kirim kode OTP terbaru ke chat ini.",
+                "Contoh: <code>12345</code>",
+            ]))
+
+            deadline = time.time() + timeout_seconds
+            otp_code = None
+
+            while time.time() < deadline:
+                latest = fetch_one(
+                    conn,
+                    "select pending_otp_code from telegram_client_accounts where id = %s limit 1",
+                    (account_id,),
+                )
+
+                if latest and latest.get("pending_otp_code"):
+                    otp_code = str(latest["pending_otp_code"])
+                    break
+
+                time.sleep(2)
+
+            if not otp_code:
+                execute(
+                    conn,
+                    """
+                    update telegram_client_accounts
+                    set auth_status = 'awaiting_phone',
+                        pending_otp_code = null,
+                        last_error = 'OTP_TIMEOUT',
+                        updated_at = now()
+                    where id = %s
+                    """,
+                    (account_id,),
+                )
+                send_bot_message(account["bot_chat_id"], "Kode OTP kedaluwarsa. Klik <b>Buat Userbot</b> untuk mencoba lagi.")
+                return
+
+            execute(
+                conn,
+                """
+                update telegram_client_accounts
+                set pending_otp_code = null,
+                    updated_at = now()
+                where id = %s
+                """,
+                (account_id,),
+            )
+
+            try:
+                app.sign_in(
+                    phone_number=account["phone_number"],
+                    phone_code_hash=sent_code.phone_code_hash,
+                    phone_code=otp_code,
+                )
+            except SessionPasswordNeeded:
+                execute(
+                    conn,
+                    """
+                    update telegram_client_accounts
+                    set auth_status = 'awaiting_password',
+                        last_error = null,
+                        updated_at = now()
+                    where id = %s
+                    """,
+                    (account_id,),
+                )
+                send_bot_message(account["bot_chat_id"], "Akun ini memakai password 2FA. Fitur input password akan disambungkan berikutnya.")
+                return
+
+            me = app.get_me()
+
+            execute(
+                conn,
+                """
+                update telegram_client_accounts
+                set auth_status = 'authorized',
+                    phone_code_hash = null,
+                    pending_otp_code = null,
+                    pending_session_string = null,
+                    last_login_at = now(),
+                    last_seen_at = now(),
+                    last_error = null,
+                    updated_at = now()
+                where id = %s
+                """,
+                (account_id,),
+            )
+
+            send_bot_message(account["bot_chat_id"], "\n".join([
+                "<b>Userbot berhasil dibuat.</b>",
+                "",
+                f"Akun Telegram <code>{getattr(me, 'username', None) or account['phone_number']}</code> sudah terhubung.",
+                "Langkah berikutnya: kita setting daftar grup.",
+            ]))
+        except Exception as exc:
+            execute(
+                conn,
+                """
+                update telegram_client_accounts
+                set auth_status = 'awaiting_phone',
+                    pending_otp_code = null,
+                    last_error = %s,
+                    updated_at = now()
+                where id = %s
+                """,
+                (str(exc), account_id),
+            )
+            send_bot_message(account["bot_chat_id"], "\n".join([
+                "<b>Login belum berhasil.</b>",
+                "",
+                f"Alasan: <code>{str(exc)[:350]}</code>",
+                "Klik <b>Buat Userbot</b> untuk mencoba ulang.",
+            ]))
+            raise
+        finally:
+            app.disconnect()
+
+
 def target_for_group(group: dict[str, Any]) -> str:
     if group.get("chat_id"):
         return group["chat_id"]
@@ -480,6 +663,10 @@ def main() -> None:
     sign_in_direct_parser.add_argument("code")
     sign_in_direct_parser.add_argument("--password")
 
+    login_flow_parser = subparsers.add_parser("login-flow")
+    login_flow_parser.add_argument("account_id", type=int)
+    login_flow_parser.add_argument("--timeout", type=int, default=300)
+
     share_parser = subparsers.add_parser("share")
     share_parser.add_argument("share_id", type=int)
     share_parser.add_argument("--delay", type=float, default=5.0)
@@ -504,6 +691,8 @@ def main() -> None:
             args.code,
             args.password,
         )
+    elif args.command == "login-flow":
+        login_flow(args.account_id, args.timeout)
     elif args.command == "share":
         process_share(args.share_id, args.delay)
     elif args.command == "share-pending":

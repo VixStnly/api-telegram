@@ -279,6 +279,9 @@ class TelegramWebhookController extends Controller
         $account->update([
             'phone_number' => $phoneNumber,
             'auth_status' => 'sending_code',
+            'phone_code_hash' => null,
+            'pending_otp_code' => null,
+            'pending_session_string' => null,
             'last_error' => null,
             'last_seen_at' => now(),
         ]);
@@ -290,33 +293,20 @@ class TelegramWebhookController extends Controller
             'Sebentar, sistem sedang meminta kode OTP Telegram...',
         ]), ['parse_mode' => 'HTML']);
 
-        $result = $pyrogram->sendCode($account->fresh());
+        $result = $pyrogram->startLoginFlow($account->fresh());
 
         if ($result['ok']) {
-            $account->fresh()->update([
-                'auth_status' => 'awaiting_code',
-                'phone_code_hash' => $result['data']['phone_code_hash'] ?? null,
-                'pending_session_string' => null,
-                'session_file' => $result['data']['session_file'] ?? null,
-                'last_error' => null,
-                'last_seen_at' => now(),
-            ]);
-
             $telegram->sendMessage($account->bot_chat_id, implode("\n", [
-                '<b>Kode OTP sudah dikirim oleh Telegram.</b>',
+                '<b>Permintaan login sedang diproses.</b>',
                 '',
-                'Silakan kirim kode OTP ke chat ini.',
-                'Contoh: <code>12345</code>',
-                '',
-                'Gunakan kode terbaru dari request ini saja.',
-                'Jangan kirim kode ini ke orang lain selain bot ini.',
+                'Tunggu pesan kode OTP dari Telegram. Setelah bot meminta OTP, kirim kode terbaru ke chat ini.',
             ]), ['parse_mode' => 'HTML']);
 
             return true;
         }
 
         $account->fresh()->update([
-            'auth_status' => 'awaiting_phone',
+            'auth_status' => 'idle',
             'last_error' => $result['error'] ?: $result['output'],
         ]);
 
@@ -347,56 +337,11 @@ class TelegramWebhookController extends Controller
 
         $telegram->sendMessage($account->bot_chat_id, 'Kode diterima. Sedang mencoba login ke akun Telegram kamu...');
 
-        $result = $pyrogram->signIn($account, $code);
-        $status = $result['data']['status'] ?? null;
-
-        if ($result['ok'] && $status === 'password_required') {
-            $account->fresh()->update([
-                'auth_status' => 'awaiting_password',
-                'last_seen_at' => now(),
-            ]);
-
-            $telegram->sendMessage($account->bot_chat_id, implode("\n", [
-                '<b>Akun kamu memakai password 2FA.</b>',
-                '',
-                'Kirim password 2FA Telegram kamu ke chat ini untuk menyelesaikan login.',
-            ]), ['parse_mode' => 'HTML']);
-
-            return true;
-        }
-
-        if ($result['ok'] && $status === 'authorized') {
-            $account->fresh()->update([
-                'auth_status' => 'authorized',
-                'bot_username' => $result['data']['telegram_username'] ?? $account->bot_username,
-                'phone_code_hash' => null,
-                'pending_session_string' => null,
-                'last_error' => null,
-                'last_login_at' => now(),
-                'last_seen_at' => now(),
-            ]);
-
-            $telegram->sendMessage($account->bot_chat_id, implode("\n", [
-                '<b>Userbot berhasil dibuat.</b>',
-                '',
-                'Akun Telegram kamu sudah terhubung.',
-                'Langkah berikutnya: kita akan tambahkan menu untuk memasukkan link grup tujuan.',
-            ]), ['parse_mode' => 'HTML']);
-
-            return true;
-        }
-
-        $account->fresh()->update([
+        $account->update([
             'auth_status' => 'awaiting_code',
-            'last_error' => $result['error'] ?: $result['output'],
+            'pending_otp_code' => $code,
+            'last_seen_at' => now(),
         ]);
-
-        $telegram->sendMessage($account->bot_chat_id, implode("\n", [
-            '<b>Login belum berhasil.</b>',
-            '',
-            'Kode OTP mungkin salah atau sudah kedaluwarsa. Kirim ulang kode OTP yang terbaru.',
-            $this->formatWorkerErrorForTelegram($result, 'Alasan'),
-        ]), ['parse_mode' => 'HTML']);
 
         return true;
     }

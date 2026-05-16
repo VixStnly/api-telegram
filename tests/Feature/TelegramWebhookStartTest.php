@@ -162,7 +162,7 @@ class TelegramWebhookStartTest extends TestCase
         $this->assertDatabaseHas('telegram_client_accounts', [
             'bot_chat_id' => '987654321',
             'phone_number' => '+6281234567890',
-            'auth_status' => 'awaiting_code',
+            'auth_status' => 'sending_code',
         ]);
     }
 }

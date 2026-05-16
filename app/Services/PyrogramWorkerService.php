@@ -47,6 +47,32 @@ class PyrogramWorkerService
         ]);
     }
 
+    public function startLoginFlow(TelegramClientAccount $account): array
+    {
+        $python = base_path('userbot_worker/.venv/bin/python');
+        $worker = base_path('userbot_worker/worker.py');
+        $log = storage_path('logs/userbot-login-' . $account->id . '.log');
+
+        $command = sprintf(
+            'nohup %s %s login-flow %s --timeout 300 > %s 2>&1 & echo $!',
+            escapeshellarg($python),
+            escapeshellarg($worker),
+            escapeshellarg((string) $account->id),
+            escapeshellarg($log)
+        );
+
+        $result = Process::path(base_path())
+            ->env($this->workerEnvironment())
+            ->run(['sh', '-c', $command]);
+
+        return [
+            'ok' => $result->successful(),
+            'output' => trim($result->output()),
+            'error' => trim($result->errorOutput()),
+            'exit_code' => $result->exitCode(),
+        ];
+    }
+
     protected function run(array $arguments): array
     {
         return $this->runRaw(array_merge(['worker.py'], $arguments));
