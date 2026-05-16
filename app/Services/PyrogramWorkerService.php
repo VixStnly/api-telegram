@@ -43,10 +43,7 @@ class PyrogramWorkerService
         $candidates = array_values(array_unique(array_filter([
             base_path('userbot_worker/.venv/bin/python'),
             base_path('userbot_worker/.venv/Scripts/python.exe'),
-            '/usr/bin/python3',
             env('PYROGRAM_PYTHON_BIN'),
-            'python3',
-            'python',
         ])));
 
         $attempts = [];
