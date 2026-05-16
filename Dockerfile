@@ -28,7 +28,7 @@ RUN npm ci
 COPY userbot_worker/requirements.txt userbot_worker/requirements.txt
 RUN python3 -m venv userbot_worker/.venv \
     && userbot_worker/.venv/bin/python -m pip install --upgrade pip \
-    && userbot_worker/.venv/bin/python -m pip install -r userbot_worker/requirements.txt
+    && userbot_worker/.venv/bin/python -m pip install --no-cache-dir -r userbot_worker/requirements.txt
 
 COPY . .
 
