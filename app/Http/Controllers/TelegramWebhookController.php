@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\TelegramClientAccount;
+use App\Models\TelegramClientGroup;
 use App\Models\TelegramGroup;
 use App\Services\AutoReplyEngine;
 use App\Services\PyrogramWorkerService;
@@ -35,7 +36,7 @@ class TelegramWebhookController extends Controller
             $callbackQuery = $update['callback_query'] ?? null;
 
             if ($callbackQuery) {
-                $this->handleCallbackQuery($callbackQuery, $telegram);
+                $this->handleCallbackQuery($callbackQuery, $telegram, $pyrogram);
 
                 return response()->json(['ok' => true]);
             }
@@ -217,8 +218,11 @@ class TelegramWebhookController extends Controller
         }
     }
 
-    protected function handleCallbackQuery(array $callbackQuery, TelegramBotService $telegram): void
-    {
+    protected function handleCallbackQuery(
+        array $callbackQuery,
+        TelegramBotService $telegram,
+        PyrogramWorkerService $pyrogram
+    ): void {
         $callbackId = (string) ($callbackQuery['id'] ?? '');
         $data = (string) ($callbackQuery['data'] ?? '');
         $message = $callbackQuery['message'] ?? [];
@@ -253,18 +257,86 @@ class TelegramWebhookController extends Controller
         }
 
         if ($data === 'userbot:list') {
-            $account = TelegramClientAccount::where('bot_chat_id', $chatId)->first();
-            $status = $account?->auth_status ?? 'belum dibuat';
-            $phone = $account?->phone_number ?? '-';
+            $accounts = TelegramClientAccount::where('bot_chat_id', $chatId)
+                ->whereNotNull('phone_number')
+                ->latest()
+                ->get();
 
-            $telegram->sendMessage($chatId, implode("\n", [
-                '<b>List Userbot Kamu</b>',
-                '',
-                "Nomor: {$phone}",
-                "Status: {$status}",
-                '',
-                'Nanti di sini akan tampil semua userbot aktif dan daftar grupnya.',
-            ]), ['parse_mode' => 'HTML']);
+            if ($accounts->isEmpty()) {
+                $telegram->sendMessage($chatId, '<b>Belum ada userbot.</b>', [
+                    'parse_mode' => 'HTML',
+                    'reply_markup' => $this->welcomeKeyboard(),
+                ]);
+
+                return;
+            }
+
+            $telegram->sendMessage($chatId, '<b>Pilih userbot yang ingin kamu setting.</b>', [
+                'parse_mode' => 'HTML',
+                'reply_markup' => $this->userbotListKeyboard($accounts),
+            ]);
+
+            return;
+        }
+
+        if (str_starts_with($data, 'userbot:settings:')) {
+            $account = $this->authorizedAccountFromCallback($chatId, $data, 'userbot:settings:');
+
+            if (! $account) {
+                $telegram->sendMessage($chatId, 'Userbot belum aktif atau bukan milik chat ini.');
+
+                return;
+            }
+
+            $telegram->sendMessage($chatId, $this->userbotSettingsMessage($account), [
+                'parse_mode' => 'HTML',
+                'reply_markup' => $this->userbotSettingsKeyboard($account),
+            ]);
+
+            return;
+        }
+
+        if (str_starts_with($data, 'userbot:add_group:')) {
+            $account = $this->authorizedAccountFromCallback($chatId, $data, 'userbot:add_group:');
+
+            if (! $account) {
+                $telegram->sendMessage($chatId, 'Userbot belum aktif atau bukan milik chat ini.');
+
+                return;
+            }
+
+            $this->sendUserbotGroupPicker($telegram, $pyrogram, $chatId, $account);
+
+            return;
+        }
+
+        if (str_starts_with($data, 'userbot:toggle_group:')) {
+            $parts = explode(':', $data, 4);
+            $accountId = (int) ($parts[2] ?? 0);
+            $chatIdToToggle = (string) ($parts[3] ?? '');
+            $account = TelegramClientAccount::where('bot_chat_id', $chatId)
+                ->whereKey($accountId)
+                ->where('auth_status', 'authorized')
+                ->first();
+
+            if (! $account || $chatIdToToggle === '') {
+                $telegram->sendMessage($chatId, 'Grup tidak valid atau userbot belum aktif.');
+
+                return;
+            }
+
+            $group = TelegramClientGroup::where('telegram_client_account_id', $account->id)
+                ->where('chat_id', $chatIdToToggle)
+                ->first();
+
+            if ($group) {
+                $group->update([
+                    'status' => $group->status === 'active' ? 'inactive' : 'active',
+                    'last_verified_at' => now(),
+                ]);
+            }
+
+            $this->sendUserbotGroupPicker($telegram, $pyrogram, $chatId, $account->fresh());
 
             return;
         }
@@ -291,6 +363,184 @@ class TelegramWebhookController extends Controller
                 '4. Gunakan jeda kirim agar akun tetap aman.',
             ]), ['parse_mode' => 'HTML']);
         }
+    }
+
+    protected function authorizedAccountFromCallback(
+        string $botChatId,
+        string $data,
+        string $prefix
+    ): ?TelegramClientAccount {
+        $accountId = (int) Str::after($data, $prefix);
+
+        if ($accountId <= 0) {
+            return null;
+        }
+
+        return TelegramClientAccount::where('bot_chat_id', $botChatId)
+            ->whereKey($accountId)
+            ->where('auth_status', 'authorized')
+            ->first();
+    }
+
+    protected function sendUserbotGroupPicker(
+        TelegramBotService $telegram,
+        PyrogramWorkerService $pyrogram,
+        string $chatId,
+        TelegramClientAccount $account
+    ): void {
+        $telegram->sendMessage($chatId, '<b>Mengambil daftar grup dari akun userbot...</b>', [
+            'parse_mode' => 'HTML',
+        ]);
+
+        $result = $pyrogram->listGroups($account);
+        $groups = $result['data']['groups'] ?? [];
+
+        if (! $result['ok'] || ! is_array($groups)) {
+            $telegram->sendMessage($chatId, implode("\n", [
+                '<b>Belum bisa mengambil grup.</b>',
+                '',
+                $this->formatWorkerErrorForTelegram($result, 'Alasan'),
+            ]), ['parse_mode' => 'HTML']);
+
+            return;
+        }
+
+        foreach ($groups as $group) {
+            $this->syncClientGroup($account, $group);
+        }
+
+        $account = $account->fresh();
+
+        if (count($groups) === 0) {
+            $telegram->sendMessage($chatId, implode("\n", [
+                '<b>Belum ada grup yang terbaca.</b>',
+                '',
+                'Pastikan akun userbot sudah join ke grup target promosi.',
+            ]), [
+                'parse_mode' => 'HTML',
+                'reply_markup' => $this->userbotSettingsKeyboard($account),
+            ]);
+
+            return;
+        }
+
+        $telegram->sendMessage($chatId, implode("\n", [
+            '<b>Pilih grup target promosi.</b>',
+            '',
+            'Klik nama grup untuk masuk atau keluar dari list share.',
+        ]), [
+            'parse_mode' => 'HTML',
+            'reply_markup' => $this->groupPickerKeyboard($account),
+        ]);
+    }
+
+    protected function syncClientGroup(TelegramClientAccount $account, array $group): TelegramClientGroup
+    {
+        $clientGroup = TelegramClientGroup::firstOrNew([
+            'telegram_client_account_id' => $account->id,
+            'chat_id' => (string) ($group['chat_id'] ?? ''),
+        ]);
+
+        $clientGroup->fill([
+            'username' => $group['username'] ?? null,
+            'title' => $group['title'] ?? $group['chat_id'] ?? 'Grup Telegram',
+            'status' => $clientGroup->exists ? $clientGroup->status : 'inactive',
+            'last_verified_at' => now(),
+            'last_error' => null,
+            'meta' => [
+                'source' => 'pyrogram_dialogs',
+                'type' => $group['type'] ?? null,
+            ],
+        ]);
+        $clientGroup->save();
+
+        return $clientGroup;
+    }
+
+    protected function userbotListKeyboard($accounts): array
+    {
+        $rows = [];
+
+        foreach ($accounts as $account) {
+            $label = trim(($account->phone_number ?? 'Userbot').' - '.$account->auth_status);
+
+            $rows[] = [[
+                'text' => Str::limit($label, 60, '...'),
+                'callback_data' => 'userbot:settings:'.$account->id,
+            ]];
+        }
+
+        $rows[] = [[
+            'text' => 'Buat Userbot Baru',
+            'callback_data' => 'userbot:create',
+        ]];
+
+        return ['inline_keyboard' => $rows];
+    }
+
+    protected function userbotSettingsMessage(TelegramClientAccount $account): string
+    {
+        $activeGroups = TelegramClientGroup::where('telegram_client_account_id', $account->id)
+            ->where('status', 'active')
+            ->count();
+
+        return implode("\n", [
+            '<b>Setting Userbot</b>',
+            '',
+            'Nomor: <code>'.e($account->phone_number ?? '-').'</code>',
+            'Status: <code>'.e($account->auth_status).'</code>',
+            'Grup aktif: <code>'.$activeGroups.'</code>',
+            '',
+            'Pilih menu setting di bawah.',
+        ]);
+    }
+
+    protected function userbotSettingsKeyboard(TelegramClientAccount $account): array
+    {
+        return [
+            'inline_keyboard' => [
+                [
+                    [
+                        'text' => 'Add Grup',
+                        'callback_data' => 'userbot:add_group:'.$account->id,
+                    ],
+                ],
+                [
+                    [
+                        'text' => 'Kembali ke List Bot',
+                        'callback_data' => 'userbot:list',
+                    ],
+                ],
+            ],
+        ];
+    }
+
+    protected function groupPickerKeyboard(TelegramClientAccount $account): array
+    {
+        $groups = TelegramClientGroup::where('telegram_client_account_id', $account->id)
+            ->whereNotNull('chat_id')
+            ->orderByRaw("case when status = 'active' then 0 else 1 end")
+            ->orderBy('title')
+            ->limit(40)
+            ->get();
+        $rows = [];
+
+        foreach ($groups as $group) {
+            $prefix = $group->status === 'active' ? '✅ ' : '';
+            $title = $group->title ?: $group->chat_id;
+
+            $rows[] = [[
+                'text' => Str::limit($prefix.$title, 60, '...'),
+                'callback_data' => 'userbot:toggle_group:'.$account->id.':'.$group->chat_id,
+            ]];
+        }
+
+        $rows[] = [[
+            'text' => 'Kembali ke Setting',
+            'callback_data' => 'userbot:settings:'.$account->id,
+        ]];
+
+        return ['inline_keyboard' => $rows];
     }
 
     protected function handleOnboardingMessage(

@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\TelegramClientAccount;
+use App\Models\TelegramClientGroup;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Process;
@@ -286,5 +287,108 @@ class TelegramWebhookStartTest extends TestCase
             'bot_chat_id' => 'old-chat',
             'phone_number' => '+6281234567890',
         ]);
+    }
+
+    public function test_add_group_lists_userbot_groups_and_toggle_selection(): void
+    {
+        config([
+            'services.telegram.bot_token' => 'testing-token',
+            'services.telegram.webhook_secret' => 'testing-secret',
+        ]);
+
+        Http::fake([
+            'https://api.telegram.org/bottesting-token/*' => Http::response(['ok' => true]),
+        ]);
+
+        Process::fake([
+            '*' => Process::result(output: json_encode([
+                'status' => 'ok',
+                'groups' => [
+                    [
+                        'chat_id' => '-1001234567890',
+                        'title' => 'Grup Jualan Test',
+                        'username' => 'jualan_test',
+                        'type' => 'ChatType.SUPERGROUP',
+                    ],
+                ],
+            ])),
+        ]);
+
+        $account = TelegramClientAccount::create([
+            'bot_chat_id' => '987654321',
+            'bot_user_id' => '987654321',
+            'phone_number' => '+6281234567890',
+            'session_name' => 'client_987654321_test',
+            'auth_status' => 'authorized',
+            'is_active' => true,
+        ]);
+
+        $response = $this
+            ->withHeader('X-Telegram-Bot-Api-Secret-Token', 'testing-secret')
+            ->postJson('/telegram/webhook', [
+                'update_id' => 6,
+                'callback_query' => [
+                    'id' => 'callback-add-group',
+                    'data' => 'userbot:add_group:'.$account->id,
+                    'from' => [
+                        'id' => 987654321,
+                        'is_bot' => false,
+                        'first_name' => 'Tester',
+                    ],
+                    'message' => [
+                        'message_id' => 15,
+                        'chat' => [
+                            'id' => 987654321,
+                            'type' => 'private',
+                        ],
+                    ],
+                ],
+            ]);
+
+        $response->assertOk()->assertJson(['ok' => true]);
+
+        $this->assertDatabaseHas('telegram_client_groups', [
+            'telegram_client_account_id' => $account->id,
+            'chat_id' => '-1001234567890',
+            'title' => 'Grup Jualan Test',
+            'status' => 'inactive',
+        ]);
+
+        $response = $this
+            ->withHeader('X-Telegram-Bot-Api-Secret-Token', 'testing-secret')
+            ->postJson('/telegram/webhook', [
+                'update_id' => 7,
+                'callback_query' => [
+                    'id' => 'callback-toggle-group',
+                    'data' => 'userbot:toggle_group:'.$account->id.':-1001234567890',
+                    'from' => [
+                        'id' => 987654321,
+                        'is_bot' => false,
+                        'first_name' => 'Tester',
+                    ],
+                    'message' => [
+                        'message_id' => 16,
+                        'chat' => [
+                            'id' => 987654321,
+                            'type' => 'private',
+                        ],
+                    ],
+                ],
+            ]);
+
+        $response->assertOk()->assertJson(['ok' => true]);
+
+        $this->assertDatabaseHas('telegram_client_groups', [
+            'telegram_client_account_id' => $account->id,
+            'chat_id' => '-1001234567890',
+            'status' => 'active',
+        ]);
+
+        $this->assertTrue(
+            TelegramClientGroup::where('telegram_client_account_id', $account->id)
+                ->where('chat_id', '-1001234567890')
+                ->where('status', 'active')
+                ->exists()
+        );
     }
 }

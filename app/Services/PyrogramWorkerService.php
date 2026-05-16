@@ -47,11 +47,21 @@ class PyrogramWorkerService
         ]);
     }
 
+    public function listGroups(TelegramClientAccount $account): array
+    {
+        $result = $this->run([
+            'list-groups',
+            (string) $account->id,
+        ]);
+
+        return $this->withJsonData($result);
+    }
+
     public function startLoginFlow(TelegramClientAccount $account, string $token): array
     {
         $python = base_path('userbot_worker/.venv/bin/python');
         $worker = base_path('userbot_worker/worker.py');
-        $log = storage_path('logs/userbot-login-' . $account->id . '.log');
+        $log = storage_path('logs/userbot-login-'.$account->id.'.log');
 
         $command = sprintf(
             'nohup %s %s login-flow %s --token %s --timeout 300 > %s 2>&1 & echo $!',
@@ -172,7 +182,7 @@ class PyrogramWorkerService
         $output = trim((string) ($result['output'] ?? ''));
         $decoded = json_decode($output, true);
 
-        if (!is_array($decoded)) {
+        if (! is_array($decoded)) {
             $lines = array_reverse(array_values(array_filter(array_map('trim', preg_split('/\r\n|\r|\n/', $output) ?: []))));
 
             foreach ($lines as $line) {
@@ -187,7 +197,7 @@ class PyrogramWorkerService
         if (is_array($decoded)) {
             $result['data'] = $decoded;
 
-            if (($decoded['status'] ?? null) === 'error' && !empty($decoded['error'])) {
+            if (($decoded['status'] ?? null) === 'error' && ! empty($decoded['error'])) {
                 $result['error'] = $decoded['error'];
             }
         }

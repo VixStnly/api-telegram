@@ -128,7 +128,7 @@ def send_bot_message(chat_id: str, text: str) -> None:
 def client_for(account: dict[str, Any], config: dict[str, Any]) -> Client:
     SESSION_DIR.mkdir(parents=True, exist_ok=True)
 
-    session_string = account.get("session_string")
+    session_string = account.get("session_string") or account.get("pending_session_string")
 
     return Client(
         name=account["session_name"],
@@ -476,6 +476,11 @@ def login_flow(account_id: int, login_token: str, timeout_seconds: int = 300) ->
                 return
 
             me = app.get_me()
+            session_string = None
+            try:
+                session_string = app.export_session_string()
+            except Exception as exc:
+                print(f"session string export failed: {exc}", flush=True)
             print("authorized", flush=True)
 
             execute(
@@ -485,7 +490,7 @@ def login_flow(account_id: int, login_token: str, timeout_seconds: int = 300) ->
                 set auth_status = 'authorized',
                     phone_code_hash = null,
                     pending_otp_code = null,
-                    pending_session_string = null,
+                    pending_session_string = %s,
                     pending_login_token = null,
                     last_login_at = now(),
                     last_seen_at = now(),
@@ -494,7 +499,7 @@ def login_flow(account_id: int, login_token: str, timeout_seconds: int = 300) ->
                 where id = %s
                   and pending_login_token = %s
                 """,
-                (account_id, login_token),
+                (session_string, account_id, login_token),
             )
 
             send_bot_message(account["bot_chat_id"], "\n".join([
@@ -651,6 +656,45 @@ def process_share(share_id: int, delay_seconds: float) -> None:
     print(status)
 
 
+def list_groups(account_id: int) -> None:
+    config = load_config()
+
+    with db_connect(config) as conn:
+        account = fetch_one(
+            conn,
+            "select * from telegram_client_accounts where id = %s limit 1",
+            (account_id,),
+        )
+
+        if not account or account["auth_status"] != "authorized":
+            raise RuntimeError("Account not found or not authorized")
+
+    groups = []
+
+    with client_for(account, config) as app:
+        for dialog in app.get_dialogs():
+            chat = dialog.chat
+            chat_type = str(getattr(chat, "type", "")).lower()
+
+            if "group" not in chat_type:
+                continue
+
+            groups.append({
+                "chat_id": str(chat.id),
+                "title": getattr(chat, "title", None) or getattr(chat, "first_name", None) or str(chat.id),
+                "username": getattr(chat, "username", None),
+                "type": chat_type,
+            })
+
+            if len(groups) >= 80:
+                break
+
+    print(json.dumps({
+        "status": "ok",
+        "groups": groups,
+    }, ensure_ascii=False))
+
+
 def create_delivery(conn, share_id: int, group: dict[str, Any]) -> int:
     execute(
         conn,
@@ -723,6 +767,9 @@ def main() -> None:
     pending_parser.add_argument("--limit", type=int, default=5)
     pending_parser.add_argument("--delay", type=float, default=5.0)
 
+    list_groups_parser = subparsers.add_parser("list-groups")
+    list_groups_parser.add_argument("account_id", type=int)
+
     args = parser.parse_args()
 
     if args.command == "send-code":
@@ -745,6 +792,8 @@ def main() -> None:
         process_share(args.share_id, args.delay)
     elif args.command == "share-pending":
         process_pending(args.limit, args.delay)
+    elif args.command == "list-groups":
+        list_groups(args.account_id)
 
 
 if __name__ == "__main__":
