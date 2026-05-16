@@ -35,6 +35,7 @@ COPY . .
 RUN composer dump-autoload --optimize \
     && npm run build \
     && mkdir -p storage/app/telegram-sessions storage/framework/cache storage/framework/sessions storage/framework/views bootstrap/cache \
-    && chmod -R 775 storage bootstrap/cache
+    && chmod -R 775 storage bootstrap/cache \
+    && chmod +x scripts/start-railway.sh
 
-CMD ["sh", "-c", "php artisan migrate --force && php artisan db:seed --class=AdminUserSeeder --force && php artisan view:cache && php artisan serve --host=0.0.0.0 --port=${PORT:-8000}"]
+CMD ["scripts/start-railway.sh"]
