@@ -712,6 +712,7 @@ def main() -> None:
 
     login_flow_parser = subparsers.add_parser("login-flow")
     login_flow_parser.add_argument("account_id", type=int)
+    login_flow_parser.add_argument("--token", required=True)
     login_flow_parser.add_argument("--timeout", type=int, default=300)
 
     share_parser = subparsers.add_parser("share")
@@ -739,7 +740,7 @@ def main() -> None:
             args.password,
         )
     elif args.command == "login-flow":
-        login_flow(args.account_id, args.timeout)
+        login_flow(args.account_id, args.token, args.timeout)
     elif args.command == "share":
         process_share(args.share_id, args.delay)
     elif args.command == "share-pending":
