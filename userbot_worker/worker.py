@@ -326,6 +326,7 @@ def sign_in_direct(
 
 
 def login_flow(account_id: int, timeout_seconds: int = 300) -> None:
+    print(f"login_flow started account_id={account_id}", flush=True)
     config = load_config()
 
     with db_connect(config) as conn:
@@ -341,6 +342,7 @@ def login_flow(account_id: int, timeout_seconds: int = 300) -> None:
         if not account.get("phone_number"):
             raise RuntimeError("phone_number is empty")
 
+        print(f"sending code phone={account['phone_number']} session={account['session_name']}", flush=True)
         clear_session_files(account["session_name"])
 
         app = client_for(account, config)
@@ -348,6 +350,7 @@ def login_flow(account_id: int, timeout_seconds: int = 300) -> None:
 
         try:
             sent_code = app.send_code(account["phone_number"])
+            print("code sent by telegram", flush=True)
 
             execute(
                 conn,
@@ -374,6 +377,7 @@ def login_flow(account_id: int, timeout_seconds: int = 300) -> None:
             deadline = time.time() + timeout_seconds
             otp_code = None
 
+            print("waiting for otp code", flush=True)
             while time.time() < deadline:
                 latest = fetch_one(
                     conn,
@@ -388,6 +392,7 @@ def login_flow(account_id: int, timeout_seconds: int = 300) -> None:
                 time.sleep(2)
 
             if not otp_code:
+                print("otp wait timeout", flush=True)
                 execute(
                     conn,
                     """
@@ -403,6 +408,7 @@ def login_flow(account_id: int, timeout_seconds: int = 300) -> None:
                 send_bot_message(account["bot_chat_id"], "Kode OTP kedaluwarsa. Klik <b>Buat Userbot</b> untuk mencoba lagi.")
                 return
 
+            print("otp code received, signing in", flush=True)
             execute(
                 conn,
                 """
@@ -436,6 +442,7 @@ def login_flow(account_id: int, timeout_seconds: int = 300) -> None:
                 return
 
             me = app.get_me()
+            print("authorized", flush=True)
 
             execute(
                 conn,
@@ -461,6 +468,7 @@ def login_flow(account_id: int, timeout_seconds: int = 300) -> None:
                 "Langkah berikutnya: kita setting daftar grup.",
             ]))
         except Exception as exc:
+            print(f"login_flow failed: {exc}", flush=True)
             execute(
                 conn,
                 """

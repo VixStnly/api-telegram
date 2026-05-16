@@ -120,6 +120,33 @@ class TelegramWebhookController extends Controller
             return response()->json(['ok' => true]);
         }
 
+        if ($text === '/debug_login' && $chatId !== '') {
+            $account = TelegramClientAccount::where('bot_chat_id', $chatId)->first();
+
+            if (!$account) {
+                $telegram->sendMessage($chatId, 'Belum ada data login untuk chat ini.');
+
+                return response()->json(['ok' => true]);
+            }
+
+            $logPath = storage_path('logs/userbot-login-' . $account->id . '.log');
+            $log = is_file($logPath) ? file_get_contents($logPath) : 'Log belum ada.';
+            $log = Str::limit(trim((string) $log), 2500);
+
+            $telegram->sendMessage($chatId, implode("\n", [
+                '<b>Debug Login</b>',
+                '',
+                'Account ID: <code>' . e((string) $account->id) . '</code>',
+                'Status: <code>' . e($account->auth_status) . '</code>',
+                'Last Error: <code>' . e($account->last_error ?? '-') . '</code>',
+                '',
+                '<b>Worker Log</b>',
+                '<code>' . e($log ?: '-') . '</code>',
+            ]), ['parse_mode' => 'HTML']);
+
+            return response()->json(['ok' => true]);
+        }
+
         if ($chatId !== '' && ($chat['type'] ?? '') === 'private') {
             $account = $this->findOrRegisterClientAccount($chatId, $from);
 
