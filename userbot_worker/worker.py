@@ -142,6 +142,8 @@ def send_code_direct(phone_number: str, session_name: str) -> None:
         "session_name": session_name,
     }
 
+    clear_session_files(session_name)
+
     app = client_for(account, config)
     app.connect()
     try:
@@ -152,8 +154,19 @@ def send_code_direct(phone_number: str, session_name: str) -> None:
     print(json.dumps({
         "status": "code_sent",
         "phone_code_hash": sent_code.phone_code_hash,
+        "phone_code_hash_length": len(sent_code.phone_code_hash),
         "session_file": str(SESSION_DIR / f"{session_name}.session"),
     }))
+
+
+def clear_session_files(session_name: str) -> None:
+    SESSION_DIR.mkdir(parents=True, exist_ok=True)
+
+    for suffix in (".session", ".session-journal"):
+        path = SESSION_DIR / f"{session_name}{suffix}"
+
+        if path.exists():
+            path.unlink()
 
 
 def sign_in(account_id: int, code: str, password: str | None = None) -> None:

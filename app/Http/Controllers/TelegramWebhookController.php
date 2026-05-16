@@ -91,7 +91,7 @@ class TelegramWebhookController extends Controller
                 'Status: <code>' . e($account->auth_status) . '</code>',
                 'Nomor: <code>' . e($account->phone_number ?? '-') . '</code>',
                 'Session: <code>' . e($account->session_name) . '</code>',
-                'Code Hash: <code>' . e($account->phone_code_hash ? 'ada' : '-') . '</code>',
+                'Code Hash: <code>' . e($account->phone_code_hash ? 'ada (' . strlen($account->phone_code_hash) . ')' : '-') . '</code>',
                 'Error: <code>' . e($account->last_error ?? '-') . '</code>',
             ]), ['parse_mode' => 'HTML']);
 
@@ -290,6 +290,7 @@ class TelegramWebhookController extends Controller
                 'Silakan kirim kode OTP ke chat ini.',
                 'Contoh: <code>12345</code>',
                 '',
+                'Gunakan kode terbaru dari request ini saja.',
                 'Jangan kirim kode ini ke orang lain selain bot ini.',
             ]), ['parse_mode' => 'HTML']);
 
