@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 
 class TelegramBotService
 {
@@ -16,10 +17,10 @@ class TelegramBotService
 
     public function sendMessage($chatId, $text, array $extra = [])
     {
-        return Http::post("{$this->baseUrl}/sendMessage", array_merge([
+        return $this->post('sendMessage', array_merge([
             'chat_id' => $chatId,
             'text' => $text,
-        ], $extra))->json();
+        ], $extra));
     }
 
     public function answerCallbackQuery(string $callbackQueryId, ?string $text = null, array $extra = [])
@@ -30,7 +31,7 @@ class TelegramBotService
             $payload['text'] = $text;
         }
 
-        return Http::post("{$this->baseUrl}/answerCallbackQuery", array_merge($payload, $extra))->json();
+        return $this->post('answerCallbackQuery', array_merge($payload, $extra));
     }
 
     public function setWebhook(string $url, ?string $secretToken = null)
@@ -41,7 +42,7 @@ class TelegramBotService
             $payload['secret_token'] = $secretToken;
         }
 
-        return Http::post("{$this->baseUrl}/setWebhook", $payload)->json();
+        return $this->post('setWebhook', $payload);
     }
 
     public function getWebhookInfo()
@@ -52,5 +53,25 @@ class TelegramBotService
     public function getMe()
     {
         return Http::get("{$this->baseUrl}/getMe")->json();
+    }
+
+    protected function post(string $method, array $payload): array
+    {
+        try {
+            return Http::post("{$this->baseUrl}/{$method}", $payload)->json() ?? [
+                'ok' => false,
+                'description' => 'Telegram returned an empty response.',
+            ];
+        } catch (\Throwable $e) {
+            Log::error('Telegram API request failed', [
+                'method' => $method,
+                'message' => $e->getMessage(),
+            ]);
+
+            return [
+                'ok' => false,
+                'description' => $e->getMessage(),
+            ];
+        }
     }
 }

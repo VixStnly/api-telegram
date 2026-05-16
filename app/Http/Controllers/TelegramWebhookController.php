@@ -194,11 +194,18 @@ class TelegramWebhookController extends Controller
 
             if ($fallbackChatId !== '') {
                 try {
-                    $telegram->sendMessage($fallbackChatId, implode("\n", [
+                    $fallbackLines = [
                         '<b>Sistem sedang diproses ulang.</b>',
                         '',
                         'Coba kirim <code>/start</code> lagi beberapa detik lagi.',
-                    ]), ['parse_mode' => 'HTML']);
+                    ];
+
+                    if (config('app.debug')) {
+                        $fallbackLines[] = '';
+                        $fallbackLines[] = 'Debug: <code>'.e(Str::limit($e->getMessage(), 250)).'</code>';
+                    }
+
+                    $telegram->sendMessage($fallbackChatId, implode("\n", $fallbackLines), ['parse_mode' => 'HTML']);
                 } catch (\Throwable $sendError) {
                     Log::error('Telegram webhook fallback message failed', [
                         'message' => $sendError->getMessage(),
