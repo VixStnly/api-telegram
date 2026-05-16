@@ -37,6 +37,22 @@ def load_config() -> dict[str, Any]:
 
 
 def database_config() -> dict[str, Any]:
+    db_host = os.getenv("DB_HOST")
+    db_database = os.getenv("DB_DATABASE")
+
+    if db_host and db_database:
+        return {
+            "host": db_host,
+            "port": int(os.getenv("DB_PORT") or "3306"),
+            "user": os.getenv("DB_USERNAME") or "root",
+            "password": os.getenv("DB_PASSWORD") or "",
+            "database": db_database,
+            "charset": "utf8mb4",
+            "cursorclass": pymysql.cursors.DictCursor,
+            "autocommit": True,
+            "connect_timeout": 15,
+        }
+
     database_url = os.getenv("DATABASE_URL") or os.getenv("MYSQL_URL")
 
     if database_url:
@@ -328,6 +344,11 @@ def sign_in_direct(
 def login_flow(account_id: int, timeout_seconds: int = 300) -> None:
     print(f"login_flow started account_id={account_id}", flush=True)
     config = load_config()
+    db = config["db"]
+    print(
+        f"database target={db.get('user')}@{db.get('host')}:{db.get('port')}/{db.get('database')}",
+        flush=True,
+    )
 
     with db_connect(config) as conn:
         account = fetch_one(
