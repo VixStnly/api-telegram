@@ -91,6 +91,7 @@ class TelegramWebhookController extends Controller
                 'Status: <code>' . e($account->auth_status) . '</code>',
                 'Nomor: <code>' . e($account->phone_number ?? '-') . '</code>',
                 'Session: <code>' . e($account->session_name) . '</code>',
+                'Code Hash: <code>' . e($account->phone_code_hash ? 'ada' : '-') . '</code>',
                 'Error: <code>' . e($account->last_error ?? '-') . '</code>',
             ]), ['parse_mode' => 'HTML']);
 
@@ -161,6 +162,7 @@ class TelegramWebhookController extends Controller
             $account = $this->findOrRegisterClientAccount($chatId, $from);
             $account->update([
                 'auth_status' => 'awaiting_phone',
+                'phone_code_hash' => null,
                 'last_error' => null,
                 'last_seen_at' => now(),
             ]);
@@ -372,6 +374,7 @@ class TelegramWebhookController extends Controller
             '<b>Login belum berhasil.</b>',
             '',
             'Kode OTP mungkin salah atau sudah kedaluwarsa. Kirim ulang kode OTP yang terbaru.',
+            $this->formatWorkerErrorForTelegram($result),
         ]), ['parse_mode' => 'HTML']);
 
         return true;

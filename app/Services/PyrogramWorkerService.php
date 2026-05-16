@@ -143,10 +143,27 @@ class PyrogramWorkerService
 
     protected function withJsonData(array $result): array
     {
-        $decoded = json_decode($result['output'] ?? '', true);
+        $output = trim((string) ($result['output'] ?? ''));
+        $decoded = json_decode($output, true);
+
+        if (!is_array($decoded)) {
+            $lines = array_reverse(array_values(array_filter(array_map('trim', preg_split('/\r\n|\r|\n/', $output) ?: []))));
+
+            foreach ($lines as $line) {
+                $decoded = json_decode($line, true);
+
+                if (is_array($decoded)) {
+                    break;
+                }
+            }
+        }
 
         if (is_array($decoded)) {
             $result['data'] = $decoded;
+
+            if (($decoded['status'] ?? null) === 'error' && !empty($decoded['error'])) {
+                $result['error'] = $decoded['error'];
+            }
         }
 
         return $result;
