@@ -27,27 +27,89 @@ class PyrogramWorkerService
 
     protected function run(array $arguments): array
     {
-        $python = env('PYROGRAM_PYTHON_BIN', 'python');
-        $command = array_merge([$python, 'worker.py'], $arguments);
+        $candidates = array_values(array_unique(array_filter([
+            env('PYROGRAM_PYTHON_BIN'),
+            'python3',
+            'python',
+        ])));
 
-        $result = Process::path(base_path('userbot_worker'))
-            ->timeout(120)
-            ->run($command);
+        $attempts = [];
 
-        if ($result->failed()) {
-            Log::warning('Pyrogram worker failed', [
-                'arguments' => $arguments,
+        foreach ($candidates as $python) {
+            $command = array_merge([$python, 'worker.py'], $arguments);
+
+            try {
+                $result = Process::path(base_path('userbot_worker'))
+                    ->timeout(120)
+                    ->run($command);
+            } catch (\Throwable $e) {
+                $attempts[] = [
+                    'python' => $python,
+                    'ok' => false,
+                    'exit_code' => null,
+                    'output' => '',
+                    'error' => $e->getMessage(),
+                ];
+
+                continue;
+            }
+
+            $attempt = [
+                'python' => $python,
+                'ok' => $result->successful(),
                 'exit_code' => $result->exitCode(),
                 'output' => trim($result->output()),
                 'error' => trim($result->errorOutput()),
-            ]);
+            ];
+
+            $attempts[] = $attempt;
+
+            if ($result->successful()) {
+                return [
+                    'ok' => true,
+                    'output' => $attempt['output'],
+                    'error' => $attempt['error'],
+                    'exit_code' => $attempt['exit_code'],
+                    'python' => $python,
+                    'attempts' => $attempts,
+                ];
+            }
         }
 
+        Log::warning('Pyrogram worker failed', [
+            'arguments' => $arguments,
+            'attempts' => $attempts,
+        ]);
+
+        $lastAttempt = end($attempts) ?: [];
+
         return [
-            'ok' => $result->successful(),
-            'output' => trim($result->output()),
-            'error' => trim($result->errorOutput()),
-            'exit_code' => $result->exitCode(),
+            'ok' => false,
+            'output' => $lastAttempt['output'] ?? '',
+            'error' => $this->formatAttempts($attempts),
+            'exit_code' => $lastAttempt['exit_code'] ?? null,
+            'python' => $lastAttempt['python'] ?? null,
+            'attempts' => $attempts,
         ];
+    }
+
+    protected function formatAttempts(array $attempts): string
+    {
+        if ($attempts === []) {
+            return 'Worker tidak berjalan dan tidak ada attempt yang tercatat.';
+        }
+
+        return collect($attempts)
+            ->map(function (array $attempt) {
+                $detail = $attempt['error'] ?: $attempt['output'] ?: 'tidak ada output';
+
+                return sprintf(
+                    '%s exit=%s: %s',
+                    $attempt['python'] ?? 'python',
+                    $attempt['exit_code'] ?? '-',
+                    $detail
+                );
+            })
+            ->implode("\n");
     }
 }
