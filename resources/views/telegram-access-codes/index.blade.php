@@ -30,7 +30,7 @@
                 <tr class="border-b border-white/10 text-left text-zinc-400">
                     <th class="py-3 pr-4">Kode</th>
                     <th class="py-3 pr-4">Label</th>
-                    <th class="py-3 pr-4">Kuota</th>
+                    <th class="py-3 pr-4">Sisa Kuota</th>
                     <th class="py-3 pr-4">Expired</th>
                     <th class="py-3 pr-4">Status</th>
                     <th class="py-3 pr-4">Aksi</th>
@@ -46,10 +46,10 @@
                         <td class="py-4 pr-4 text-zinc-300">{{ $code->label ?: '-' }}</td>
                         <td class="py-4 pr-4 text-zinc-300">
                             <div class="font-semibold text-white">
-                                {{ $code->used_count }} / {{ $code->max_uses ?: 'unlimited' }}
+                                {{ $code->remainingUses() ?? 'unlimited' }} / {{ $code->max_uses ?: 'unlimited' }}
                             </div>
                             <div class="text-xs text-zinc-500">
-                                Sisa: {{ $code->remainingUses() ?? 'unlimited' }}
+                                Terpakai: {{ $code->used_count }}
                             </div>
                             <div class="text-xs text-zinc-500">Last: {{ $code->last_used_at?->format('d/m/Y H:i') ?? '-' }}</div>
                         </td>

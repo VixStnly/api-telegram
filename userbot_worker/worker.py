@@ -104,6 +104,12 @@ def execute(conn, query: str, params: tuple[Any, ...]) -> None:
         cursor.execute(query, params)
 
 
+def execute_affected(conn, query: str, params: tuple[Any, ...]) -> int:
+    with conn.cursor() as cursor:
+        cursor.execute(query, params)
+        return int(cursor.rowcount or 0)
+
+
 def send_bot_message(chat_id: str, text: str) -> None:
     token = os.getenv("TELEGRAM_BOT_TOKEN")
 
@@ -145,6 +151,64 @@ def send_install_notice_to_saved_messages(app: Client) -> None:
         app.send_message("me", installed_message())
     except Exception as exc:
         print(f"saved messages notice failed: {exc}", flush=True)
+
+
+def account_meta(account: dict[str, Any]) -> dict[str, Any]:
+    meta = account.get("meta")
+
+    if isinstance(meta, dict):
+        return meta
+
+    if isinstance(meta, str) and meta.strip():
+        try:
+            parsed = json.loads(meta)
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+
+    return {}
+
+
+def consume_access_code_quota(conn, account: dict[str, Any]) -> None:
+    meta = account_meta(account)
+    access_code = meta.get("access_code") if isinstance(meta.get("access_code"), dict) else {}
+    access_code_id = access_code.get("id")
+
+    if not access_code_id or access_code.get("consumed_at"):
+        return
+
+    affected = execute_affected(
+        conn,
+        """
+        update telegram_access_codes
+        set used_count = used_count + 1,
+            last_used_at = now(),
+            updated_at = now()
+        where id = %s
+          and is_active = 1
+          and (expires_at is null or expires_at > now())
+          and (max_uses is null or used_count < max_uses)
+        """,
+        (access_code_id,),
+    )
+
+    if affected < 1:
+        print(f"access code quota was not consumed id={access_code_id}", flush=True)
+        return
+
+    access_code["consumed_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    meta["access_code"] = access_code
+
+    execute(
+        conn,
+        """
+        update telegram_client_accounts
+        set meta = %s,
+            updated_at = now()
+        where id = %s
+        """,
+        (json.dumps(meta), account["id"]),
+    )
 
 
 def is_auth_key_error(exc: Exception) -> bool:
@@ -390,6 +454,7 @@ def sign_in(account_id: int, code: str, password: str | None = None) -> None:
                 """,
                 (getattr(me, "username", None), session_string, session_string, account_id),
             )
+            consume_access_code_quota(conn, account)
             print("authorized")
         except Exception as exc:
             execute(
@@ -682,6 +747,7 @@ def login_flow(account_id: int, login_token: str, timeout_seconds: int = 300) ->
                     login_token,
                 ),
             )
+            consume_access_code_quota(conn, account)
             send_install_notice_to_saved_messages(app)
 
             send_bot_message(account["bot_chat_id"], "\n".join([

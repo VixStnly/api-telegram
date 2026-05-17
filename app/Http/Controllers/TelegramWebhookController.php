@@ -806,8 +806,6 @@ class TelegramWebhookController extends Controller
         }
 
         DB::transaction(function () use ($account, $accessCode, $codeText) {
-            $accessCode->markUsed();
-
             $account->fresh()->update([
                 'auth_status' => 'awaiting_phone',
                 'last_seen_at' => now(),

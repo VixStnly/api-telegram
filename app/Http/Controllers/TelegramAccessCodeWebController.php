@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\TelegramClientAccount;
 use App\Models\TelegramAccessCode;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -10,6 +11,8 @@ class TelegramAccessCodeWebController extends Controller
 {
     public function index(Request $request)
     {
+        $this->syncUsageCounts();
+
         $search = trim((string) $request->query('search', ''));
 
         $codes = TelegramAccessCode::query()
@@ -101,5 +104,27 @@ class TelegramAccessCodeWebController extends Controller
     protected function normalizeCode(string $code): string
     {
         return strtoupper(trim($code));
+    }
+
+    protected function syncUsageCounts(): void
+    {
+        TelegramAccessCode::query()
+            ->get(['id', 'code', 'used_count'])
+            ->each(function (TelegramAccessCode $accessCode) {
+                $authorizedUsageCount = TelegramClientAccount::query()
+                    ->where('auth_status', 'authorized')
+                    ->where(function ($query) use ($accessCode) {
+                        $query->where('meta->access_code->id', $accessCode->id)
+                            ->orWhere('meta->access_code->code', $accessCode->code);
+                    })
+                    ->count();
+
+                if ($authorizedUsageCount !== $accessCode->used_count) {
+                    $accessCode->forceFill([
+                        'used_count' => $authorizedUsageCount,
+                        'last_used_at' => $authorizedUsageCount > 0 ? ($accessCode->last_used_at ?? now()) : null,
+                    ])->save();
+                }
+            });
     }
 }

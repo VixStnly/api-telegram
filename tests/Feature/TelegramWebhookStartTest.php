@@ -168,7 +168,7 @@ class TelegramWebhookStartTest extends TestCase
         $accessCode->refresh();
 
         $this->assertSame('awaiting_phone', $account->auth_status);
-        $this->assertSame(1, $accessCode->used_count);
+        $this->assertSame(0, $accessCode->used_count);
         $this->assertSame('VIX-2026', $account->meta['access_code']['code'] ?? null);
 
         Http::assertSent(function ($request) {
