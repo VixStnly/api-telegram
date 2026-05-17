@@ -967,12 +967,22 @@ def is_self_command_message(message) -> bool:
     if not is_share_command(message):
         return False
 
+    # Pyrogram does not consistently mark outgoing/self messages across all
+    # chat surfaces, especially Saved Messages, comments, and channel-linked
+    # discussions. The watcher is already logged in as the userbot account, so
+    # keep the command permissive after matching the exact !share text.
     if getattr(message, "outgoing", False):
         return True
 
     from_user = getattr(message, "from_user", None)
 
-    return bool(getattr(from_user, "is_self", False))
+    if getattr(from_user, "is_self", False):
+        return True
+
+    chat = getattr(message, "chat", None)
+    chat_type = str(getattr(chat, "type", "")).lower()
+
+    return chat_type in ("chattype.private", "private")
 
 
 def self_share_command_filter(_, __, message) -> bool:
@@ -1043,7 +1053,7 @@ def notify_share_status(client: Client, message, text: str) -> None:
 
 
 def handle_share_command(client: Client, message, account_id: int, delay_seconds: float) -> None:
-    if not is_share_command(message):
+    if not is_self_command_message(message):
         return
 
     print(
@@ -1238,7 +1248,7 @@ def watch_shares(delay_seconds: float = 5.0, refresh_seconds: int = 30) -> None:
                         account_id,
                         delay_seconds,
                     ),
-                    (filters.outgoing | filters.me) & filters.create(self_share_command_filter),
+                    filters.all,
                 ))
                 clients[account_id] = client
                 print(f"watching userbot account_id={account_id} phone={account.get('phone_number')}", flush=True)
