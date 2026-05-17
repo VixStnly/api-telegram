@@ -330,6 +330,71 @@ class TelegramWebhookStartTest extends TestCase
         });
     }
 
+    public function test_phone_number_goes_to_latest_awaiting_phone_slot_even_with_stale_sending_code(): void
+    {
+        config([
+            'services.telegram.bot_token' => 'testing-token',
+            'services.telegram.webhook_secret' => 'testing-secret',
+        ]);
+
+        Http::fake([
+            'https://api.telegram.org/bottesting-token/sendMessage' => Http::response(['ok' => true]),
+        ]);
+
+        Process::fake([
+            '*' => Process::result(output: "12345\n"),
+        ]);
+
+        TelegramClientAccount::create([
+            'bot_chat_id' => '987654321',
+            'bot_user_id' => '987654321',
+            'phone_number' => '+6281111111111',
+            'session_name' => 'client_987654321_stale',
+            'auth_status' => 'sending_code',
+            'pending_login_token' => 'stale-token',
+            'is_active' => true,
+        ]);
+
+        $awaitingPhone = TelegramClientAccount::create([
+            'bot_chat_id' => '987654321',
+            'bot_user_id' => '987654321',
+            'session_name' => 'client_987654321_new',
+            'auth_status' => 'awaiting_phone',
+            'is_active' => true,
+        ]);
+
+        $response = $this
+            ->withHeader('X-Telegram-Bot-Api-Secret-Token', 'testing-secret')
+            ->postJson('/telegram/webhook', [
+                'update_id' => 24,
+                'message' => [
+                    'message_id' => 19,
+                    'text' => '+62895613113418',
+                    'from' => [
+                        'id' => 987654321,
+                        'is_bot' => false,
+                        'first_name' => 'Tester',
+                    ],
+                    'chat' => [
+                        'id' => 987654321,
+                        'type' => 'private',
+                    ],
+                ],
+            ]);
+
+        $response->assertOk()->assertJson(['ok' => true]);
+
+        $awaitingPhone->refresh();
+
+        $this->assertSame('+62895613113418', $awaitingPhone->phone_number);
+        $this->assertSame('sending_code', $awaitingPhone->auth_status);
+
+        Http::assertSent(function ($request) {
+            return $request->url() === 'https://api.telegram.org/bottesting-token/sendMessage'
+                && str_contains($request['text'], 'Nomor diterima.');
+        });
+    }
+
     public function test_phone_number_is_saved_and_otp_is_requested(): void
     {
         config([

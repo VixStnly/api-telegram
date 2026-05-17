@@ -178,7 +178,7 @@ class TelegramWebhookController extends Controller
             }
 
             if ($chatId !== '' && ($chat['type'] ?? '') === 'private') {
-                $account = $this->findOrRegisterClientAccount($chatId, $from);
+                $account = $this->findAccountForIncomingText($chatId, $from, $text);
                 $onboardingText = $account->auth_status === 'awaiting_password' ? $rawText : $text;
 
                 if ($this->handleOnboardingMessage($account, $onboardingText, $telegram, $pyrogram)) {
@@ -860,6 +860,33 @@ class TelegramWebhookController extends Controller
     {
         return $this->currentClientAccountForChat($chatId, includeAuthorized: false)
             ?? $this->registerClientAccount($chatId, $from);
+    }
+
+    protected function findAccountForIncomingText(string $chatId, array $from, string $text): TelegramClientAccount
+    {
+        if ($this->looksLikePhoneNumber($text)) {
+            $awaitingPhone = TelegramClientAccount::where('bot_chat_id', $chatId)
+                ->where('auth_status', 'awaiting_phone')
+                ->latest()
+                ->first();
+
+            if ($awaitingPhone) {
+                return $awaitingPhone;
+            }
+        }
+
+        if ($this->looksLikeOtpCode($text)) {
+            $awaitingCode = TelegramClientAccount::where('bot_chat_id', $chatId)
+                ->whereIn('auth_status', ['awaiting_code', 'sending_code'])
+                ->latest()
+                ->first();
+
+            if ($awaitingCode) {
+                return $awaitingCode;
+            }
+        }
+
+        return $this->findOrRegisterClientAccount($chatId, $from);
     }
 
     protected function currentClientAccountForChat(string $chatId, bool $includeAuthorized = true): ?TelegramClientAccount
