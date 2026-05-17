@@ -1054,6 +1054,27 @@ def short_error(text: str, limit: int = 450) -> str:
     return text[: limit - 3] + "..."
 
 
+def user_friendly_delivery_error(text: str) -> str:
+    upper = str(text).upper()
+
+    if "PEER_ID_INVALID" in upper or "PEER ID INVALID" in upper or "PEER_ID" in upper:
+        return "Userbot belum bisa mengakses grup itu atau data grup sudah berubah."
+
+    if "CHAT_WRITE_FORBIDDEN" in upper or "USER_BANNED_IN_CHANNEL" in upper:
+        return "Userbot tidak punya izin kirim pesan di grup itu."
+
+    if "SLOWMODE" in upper:
+        return "Grup sedang memakai slow mode."
+
+    if "FLOOD" in upper:
+        return "Telegram membatasi pengiriman sementara."
+
+    if "AUTH_KEY" in upper:
+        return "Session userbot bermasalah, silakan login ulang."
+
+    return "Grup itu gagal menerima pesan."
+
+
 def is_peer_invalid_error(exc: Exception) -> bool:
     text = str(exc).upper()
 
@@ -1262,7 +1283,7 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
                 duration = time.monotonic() - started_at
                 error_text = str(exc)
                 print(f"share delivery failed account_id={account_id} group={group_name} seconds={duration:.2f} error={error_text}", flush=True)
-                failed_errors.append(f"{group.get('title') or group.get('chat_id')}: {error_text}")
+                failed_errors.append(f"{group.get('title') or group.get('chat_id')}: {user_friendly_delivery_error(error_text)}")
                 execute(
                     conn,
                     """
@@ -1290,7 +1311,7 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
                         f"Gagal {index}/{len(groups)}: {group_name}",
                         f"Berhasil: {sent_count}. Gagal: {failed_count}.",
                         "",
-                        short_error(error_text, 250),
+                        user_friendly_delivery_error(error_text),
                     ]),
                 )
 
@@ -1309,7 +1330,7 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
         result_text += "\nPesan berhasil dikirim ke grup target."
 
     if failed_errors:
-        result_text += "\n\nError pertama:\n" + short_error(failed_errors[0])
+        result_text += "\n\nGagal pertama:\n" + short_error(failed_errors[0])
 
     notify_share_status(client, message, result_text)
 
