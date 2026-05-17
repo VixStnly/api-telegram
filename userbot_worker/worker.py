@@ -1355,11 +1355,44 @@ def handle_userbot_command(client: Client, message, account_id: int, delay_secon
     handle_share_command(client, message, account_id, delay_seconds)
 
 
+def message_process_key(message) -> str | None:
+    message_id = getattr(message, "id", None)
+    chat = getattr(message, "chat", None)
+    chat_id = getattr(chat, "id", None)
+
+    if message_id is None or chat_id is None:
+        return None
+
+    return f"{chat_id}:{message_id}"
+
+
+def handle_userbot_command_once(
+    client: Client,
+    message,
+    account_id: int,
+    delay_seconds: float,
+    processed_message_keys: set[str],
+) -> None:
+    if not is_userbot_command(message):
+        return
+
+    message_key = message_process_key(message)
+
+    if message_key is not None:
+        if message_key in processed_message_keys:
+            print(f"duplicate userbot command ignored account_id={account_id} key={message_key}", flush=True)
+            return
+
+        processed_message_keys.add(message_key)
+
+    handle_userbot_command(client, message, account_id, delay_seconds)
+
+
 def poll_saved_messages_for_commands(
     client: Client,
     account_id: int,
     delay_seconds: float,
-    processed_message_ids: set[int],
+    processed_message_keys: set[str],
 ) -> None:
     try:
         messages = list(client.get_chat_history("me", limit=10))
@@ -1368,21 +1401,20 @@ def poll_saved_messages_for_commands(
         return
 
     for message in reversed(messages):
-        message_id = getattr(message, "id", None)
+        message_key = message_process_key(message)
 
-        if message_id is None or message_id in processed_message_ids:
+        if message_key is None or message_key in processed_message_keys:
             continue
 
         if not is_userbot_command(message):
             continue
 
-        processed_message_ids.add(message_id)
-        print(f"userbot command found by saved-messages poll account_id={account_id} message_id={message_id} text={command_text(message)}", flush=True)
+        print(f"userbot command found by saved-messages poll account_id={account_id} key={message_key} text={command_text(message)}", flush=True)
 
         try:
-            handle_userbot_command(client, message, account_id, delay_seconds)
+            handle_userbot_command_once(client, message, account_id, delay_seconds, processed_message_keys)
         except Exception as exc:
-            print(f"saved messages command handling failed account_id={account_id} message_id={message_id}: {exc}", flush=True)
+            print(f"saved messages command handling failed account_id={account_id} key={message_key}: {exc}", flush=True)
             notify_share_status(client, message, f"Gagal memproses command: {short_error(str(exc), 350)}")
 
 
@@ -1493,7 +1525,7 @@ def watch_shares(delay_seconds: float = 5.0, refresh_seconds: int = 30) -> None:
 
     config = load_config()
     clients: dict[int, Client] = {}
-    saved_message_processed_ids: dict[int, set[int]] = {}
+    processed_message_keys_by_account: dict[int, set[str]] = {}
     last_heartbeat_at = 0.0
 
     print("share watcher started", flush=True)
@@ -1528,7 +1560,7 @@ def watch_shares(delay_seconds: float = 5.0, refresh_seconds: int = 30) -> None:
                     except Exception as exc:
                         print(f"watcher stop failed account_id={account_id}: {exc}", flush=True)
                     clients.pop(account_id, None)
-                    saved_message_processed_ids.pop(account_id, None)
+                    processed_message_keys_by_account.pop(account_id, None)
 
             for account in accounts:
                 account_id = int(account["id"])
@@ -1544,21 +1576,22 @@ def watch_shares(delay_seconds: float = 5.0, refresh_seconds: int = 30) -> None:
                 try:
                     client = client_for(account, config)
                     client.start()
+                    processed_message_keys = processed_message_keys_by_account.setdefault(account_id, set())
 
                     with db_connect(config) as conn:
                         mark_account_authorized_from_running_client(conn, account, client)
 
                     client.add_handler(MessageHandler(
-                        lambda client, message, account_id=account_id: handle_userbot_command(
+                        lambda client, message, account_id=account_id, processed_message_keys=processed_message_keys: handle_userbot_command_once(
                             client,
                             message,
                             account_id,
                             delay_seconds,
+                            processed_message_keys,
                         ),
                         filters.all,
                     ))
                     clients[account_id] = client
-                    saved_message_processed_ids.setdefault(account_id, set())
                     print(f"watching userbot account_id={account_id} phone={account.get('phone_number')}", flush=True)
                 except Exception as exc:
                     print(f"watcher start failed account_id={account_id}: {exc}", flush=True)
@@ -1575,7 +1608,7 @@ def watch_shares(delay_seconds: float = 5.0, refresh_seconds: int = 30) -> None:
                         client,
                         account_id,
                         delay_seconds,
-                        saved_message_processed_ids.setdefault(account_id, set()),
+                        processed_message_keys_by_account.setdefault(account_id, set()),
                     )
                 except Exception as exc:
                     print(f"watcher poll failed account_id={account_id}: {exc}", flush=True)
