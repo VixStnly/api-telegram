@@ -751,6 +751,7 @@ class TelegramWebhookController extends Controller
             'auth_status' => 'sending_code',
             'phone_code_hash' => null,
             'pending_otp_code' => null,
+            'session_string' => null,
             'pending_session_string' => null,
             'pending_2fa_password' => null,
             'pending_login_token' => $loginToken,

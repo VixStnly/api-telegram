@@ -221,10 +221,13 @@ def wait_for_2fa_password(conn, account_id: int, login_token: str, deadline: flo
     return None
 
 
-def client_for(account: dict[str, Any], config: dict[str, Any]) -> Client:
+def client_for(account: dict[str, Any], config: dict[str, Any], use_session_string: bool = True) -> Client:
     SESSION_DIR.mkdir(parents=True, exist_ok=True)
 
-    session_string = account.get("session_string") or account.get("pending_session_string")
+    session_string = None
+
+    if use_session_string:
+        session_string = account.get("session_string") or account.get("pending_session_string")
 
     return Client(
         name=account["session_name"],
@@ -248,7 +251,9 @@ def send_code(account_id: int) -> None:
         if not account or not account.get("phone_number"):
             raise RuntimeError("Account not found or phone_number is empty")
 
-        app = client_for(account, config)
+        account["session_string"] = None
+        account["pending_session_string"] = None
+        app = client_for(account, config, use_session_string=False)
         app.connect()
         try:
             sent_code = app.send_code(account["phone_number"])
