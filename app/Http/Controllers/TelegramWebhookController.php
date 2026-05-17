@@ -75,7 +75,7 @@ class TelegramWebhookController extends Controller
             if ($text === '/start' && $chatId !== '') {
                 $account = $this->registerClientAccount($chatId, $from);
 
-                if ($account->auth_status !== 'authorized') {
+                if (! in_array($account->auth_status, ['authorized', 'sending_code', 'awaiting_code', 'awaiting_password'], true)) {
                     $account->update([
                         'auth_status' => 'idle',
                         'phone_code_hash' => null,
@@ -95,7 +95,7 @@ class TelegramWebhookController extends Controller
             }
 
             if ($text === '/debug_userbot' && $chatId !== '') {
-                $account = TelegramClientAccount::where('bot_chat_id', $chatId)->first();
+                $account = $this->currentClientAccountForChat($chatId);
 
                 if (! $account) {
                     $telegram->sendMessage($chatId, 'Belum ada data userbot untuk chat ini.');
@@ -136,7 +136,7 @@ class TelegramWebhookController extends Controller
             }
 
             if ($text === '/debug_login' && $chatId !== '') {
-                $account = TelegramClientAccount::where('bot_chat_id', $chatId)->first();
+                $account = $this->currentClientAccountForChat($chatId);
 
                 if (! $account) {
                     $telegram->sendMessage($chatId, 'Belum ada data login untuk chat ini.');
@@ -858,11 +858,29 @@ class TelegramWebhookController extends Controller
 
     protected function findOrRegisterClientAccount(string $chatId, array $from): TelegramClientAccount
     {
-        return TelegramClientAccount::where('bot_chat_id', $chatId)
-            ->whereIn('auth_status', ['awaiting_phone', 'sending_code', 'awaiting_code', 'awaiting_password', 'idle'])
-            ->latest()
-            ->first()
+        return $this->currentClientAccountForChat($chatId, includeAuthorized: false)
             ?? $this->registerClientAccount($chatId, $from);
+    }
+
+    protected function currentClientAccountForChat(string $chatId, bool $includeAuthorized = true): ?TelegramClientAccount
+    {
+        $query = TelegramClientAccount::where('bot_chat_id', $chatId);
+
+        if (! $includeAuthorized) {
+            $query->whereIn('auth_status', ['awaiting_phone', 'sending_code', 'awaiting_code', 'awaiting_password', 'idle']);
+        }
+
+        return $query
+            ->orderByRaw("
+                case
+                    when auth_status in ('sending_code', 'awaiting_code', 'awaiting_password') then 0
+                    when auth_status = 'awaiting_phone' then 1
+                    when auth_status = 'authorized' then 2
+                    else 3
+                end
+            ")
+            ->latest()
+            ->first();
     }
 
     protected function newClientAccount(string $chatId, array $from): TelegramClientAccount

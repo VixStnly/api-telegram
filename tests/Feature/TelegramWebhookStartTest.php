@@ -272,6 +272,64 @@ class TelegramWebhookStartTest extends TestCase
         $this->assertNull($account->last_error);
     }
 
+    public function test_debug_userbot_shows_current_login_slot_when_old_idle_slot_exists(): void
+    {
+        config([
+            'services.telegram.bot_token' => 'testing-token',
+            'services.telegram.webhook_secret' => 'testing-secret',
+        ]);
+
+        Http::fake([
+            'https://api.telegram.org/bottesting-token/*' => Http::response(['ok' => true]),
+        ]);
+
+        TelegramClientAccount::create([
+            'bot_chat_id' => '987654321',
+            'bot_user_id' => '987654321',
+            'session_name' => 'client_987654321_old',
+            'auth_status' => 'idle',
+            'is_active' => true,
+        ]);
+
+        TelegramClientAccount::create([
+            'bot_chat_id' => '987654321',
+            'bot_user_id' => '987654321',
+            'phone_number' => '+62895613113418',
+            'session_name' => 'client_987654321_new',
+            'auth_status' => 'sending_code',
+            'pending_login_token' => 'debug-token',
+            'is_active' => true,
+        ]);
+
+        $response = $this
+            ->withHeader('X-Telegram-Bot-Api-Secret-Token', 'testing-secret')
+            ->postJson('/telegram/webhook', [
+                'update_id' => 23,
+                'message' => [
+                    'message_id' => 18,
+                    'text' => '/debug_userbot',
+                    'from' => [
+                        'id' => 987654321,
+                        'is_bot' => false,
+                        'first_name' => 'Tester',
+                    ],
+                    'chat' => [
+                        'id' => 987654321,
+                        'type' => 'private',
+                    ],
+                ],
+            ]);
+
+        $response->assertOk()->assertJson(['ok' => true]);
+
+        Http::assertSent(function ($request) {
+            return $request->url() === 'https://api.telegram.org/bottesting-token/sendMessage'
+                && str_contains($request['text'], 'Status: <code>sending_code</code>')
+                && str_contains($request['text'], 'Nomor: <code>+62895613113418</code>')
+                && str_contains($request['text'], 'Session: <code>client_987654321_new</code>');
+        });
+    }
+
     public function test_phone_number_is_saved_and_otp_is_requested(): void
     {
         config([
