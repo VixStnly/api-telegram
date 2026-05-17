@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\AutoReplyTestWebController;
 use App\Http\Controllers\TelegramWebhookController;
 use App\Http\Controllers\TelegramLoginController;
+use App\Http\Controllers\TelegramUserWebController;
 use Illuminate\Support\Facades\DB;
 use App\Models\User;
 
@@ -30,9 +31,11 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::resource('managed-devices', ManagedDeviceWebController::class);
     Route::resource('auto-reply-rules', AutoReplyRuleWebController::class);
     Route::resource('auto-reply-logs', AutoReplyLogWebController::class)->only(['index', 'show']);
+    Route::get('/telegram-users', [TelegramUserWebController::class, 'index'])->name('telegram-users.index');
+    Route::get('/telegram-users/{botChatId}', [TelegramUserWebController::class, 'show'])->name('telegram-users.show');
 
     Route::get('/auto-reply-test', [AutoReplyTestWebController::class, 'index'])->name('auto-reply-test.index');
-Route::post('/auto-reply-test', [AutoReplyTestWebController::class, 'process'])->name('auto-reply-test.process');
+    Route::post('/auto-reply-test', [AutoReplyTestWebController::class, 'process'])->name('auto-reply-test.process');
 });
 
 Route::middleware('auth')->group(function () {

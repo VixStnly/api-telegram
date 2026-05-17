@@ -34,6 +34,10 @@
                    class="flex items-center rounded-xl px-4 py-3 transition {{ request()->routeIs('auto-reply-logs.*') ? 'bg-emerald-500 text-zinc-950 shadow-lg shadow-emerald-950/30' : 'text-zinc-300 hover:bg-white/10 hover:text-white' }}">
                     <span>Logs</span>
                 </a>
+                <a href="{{ route('telegram-users.index') }}"
+                   class="flex items-center rounded-xl px-4 py-3 transition {{ request()->routeIs('telegram-users.*') ? 'bg-emerald-500 text-zinc-950 shadow-lg shadow-emerald-950/30' : 'text-zinc-300 hover:bg-white/10 hover:text-white' }}">
+                    <span>Telegram Users</span>
+                </a>
                 <a href="{{ route('auto-reply-test.index') }}"
    class="flex items-center rounded-xl px-4 py-3 transition {{ request()->routeIs('auto-reply-test.*') ? 'bg-emerald-500 text-zinc-950 shadow-lg shadow-emerald-950/30' : 'text-zinc-300 hover:bg-white/10 hover:text-white' }}">
     <span>Test Message</span>
