@@ -232,6 +232,7 @@ def client_for(account: dict[str, Any], config: dict[str, Any]) -> Client:
         api_hash=config["api_hash"],
         workdir=str(SESSION_DIR),
         session_string=session_string,
+        sleep_threshold=0,
     )
 
 
@@ -1125,9 +1126,23 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
         failed_count = 0
         failed_errors = []
 
-        notify_share_status(client, message, f"Memproses share ke {len(groups)} grup...")
+        notify_share_status(
+            client,
+            message,
+            f"Memproses share ke {len(groups)} grup...\nBerhasil: 0. Gagal: 0.",
+        )
 
-        for group in groups:
+        for index, group in enumerate(groups, start=1):
+            group_name = group.get("title") or group.get("chat_id") or f"grup #{index}"
+            notify_share_status(
+                client,
+                message,
+                "\n".join([
+                    f"Memproses share ke {len(groups)} grup...",
+                    f"Sedang kirim {index}/{len(groups)}: {group_name}",
+                    f"Berhasil: {sent_count}. Gagal: {failed_count}.",
+                ]),
+            )
             delivery_id = create_delivery(conn, share_id, group)
 
             try:
@@ -1145,6 +1160,15 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
                     """,
                     (str(copied.id), delivery_id),
                 )
+                notify_share_status(
+                    client,
+                    message,
+                    "\n".join([
+                        f"Memproses share ke {len(groups)} grup...",
+                        f"Selesai {index}/{len(groups)}: {group_name}",
+                        f"Berhasil: {sent_count}. Gagal: {failed_count}.",
+                    ]),
+                )
             except Exception as exc:
                 failed_count += 1
                 error_text = str(exc)
@@ -1159,6 +1183,17 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
                     where id = %s
                     """,
                     (error_text, delivery_id),
+                )
+                notify_share_status(
+                    client,
+                    message,
+                    "\n".join([
+                        f"Memproses share ke {len(groups)} grup...",
+                        f"Gagal {index}/{len(groups)}: {group_name}",
+                        f"Berhasil: {sent_count}. Gagal: {failed_count}.",
+                        "",
+                        short_error(error_text, 250),
+                    ]),
                 )
 
             if delay_seconds > 0:
