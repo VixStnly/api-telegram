@@ -583,9 +583,9 @@ def login_flow(account_id: int, login_token: str, timeout_seconds: int = 300) ->
                         )
                         send_bot_message(account["bot_chat_id"], "Password 2FA belum cocok. Kirim ulang password 2FA yang benar di chat ini.")
 
-                if not password_ok:
-                    execute(
-                        conn,
+            if not password_ok:
+                execute(
+                    conn,
                         """
                         update telegram_client_accounts
                         set auth_status = 'awaiting_phone',
@@ -601,7 +601,6 @@ def login_flow(account_id: int, login_token: str, timeout_seconds: int = 300) ->
                     return
 
             me = app.get_me()
-            send_install_notice_to_saved_messages(app)
             session_string = None
             try:
                 session_string = app.export_session_string()
@@ -629,6 +628,7 @@ def login_flow(account_id: int, login_token: str, timeout_seconds: int = 300) ->
                 """,
                 (session_string, session_string, account_id, login_token),
             )
+            send_install_notice_to_saved_messages(app)
 
             send_bot_message(account["bot_chat_id"], "\n".join([
                 "<b>Userbot berhasil dibuat.</b>",
@@ -1093,6 +1093,50 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
     )
 
 
+def mark_account_authorized_from_running_client(conn, account: dict[str, Any], client: Client) -> None:
+    if account.get("auth_status") == "authorized":
+        return
+
+    me = client.get_me()
+    session_string = account.get("session_string") or account.get("pending_session_string")
+
+    try:
+        session_string = client.export_session_string()
+    except Exception as exc:
+        print(f"watcher session string export failed account_id={account.get('id')}: {exc}", flush=True)
+
+    execute(
+        conn,
+        """
+        update telegram_client_accounts
+        set auth_status = 'authorized',
+            bot_username = coalesce(bot_username, %s),
+            session_string = coalesce(%s, session_string),
+            pending_session_string = coalesce(%s, pending_session_string),
+            phone_code_hash = null,
+            pending_otp_code = null,
+            pending_2fa_password = null,
+            pending_login_token = null,
+            last_login_at = coalesce(last_login_at, now()),
+            last_seen_at = now(),
+            last_error = null,
+            updated_at = now()
+        where id = %s
+        """,
+        (
+            getattr(me, "username", None),
+            session_string,
+            session_string,
+            account["id"],
+        ),
+    )
+
+    account["auth_status"] = "authorized"
+    account["session_string"] = session_string
+    account["pending_session_string"] = session_string
+    print(f"recovered authorized userbot account_id={account.get('id')}", flush=True)
+
+
 def watch_shares(delay_seconds: float = 5.0, refresh_seconds: int = 30) -> None:
     config = load_config()
     clients: dict[int, Client] = {}
@@ -1105,7 +1149,13 @@ def watch_shares(delay_seconds: float = 5.0, refresh_seconds: int = 30) -> None:
                 cursor.execute(
                     """
                     select * from telegram_client_accounts
-                    where auth_status = 'authorized' and is_active = 1
+                    where is_active = 1
+                      and (
+                        auth_status = 'authorized'
+                        or session_string is not null
+                        or pending_session_string is not null
+                        or auth_status in ('sending_code', 'awaiting_code', 'awaiting_password')
+                      )
                     order by id asc
                     """
                 )
@@ -1130,6 +1180,11 @@ def watch_shares(delay_seconds: float = 5.0, refresh_seconds: int = 30) -> None:
 
             try:
                 client = client_for(account, config)
+                client.start()
+
+                with db_connect(config) as conn:
+                    mark_account_authorized_from_running_client(conn, account, client)
+
                 client.add_handler(MessageHandler(
                     lambda client, message, account_id=account_id: handle_share_command(
                         client,
@@ -1139,7 +1194,6 @@ def watch_shares(delay_seconds: float = 5.0, refresh_seconds: int = 30) -> None:
                     ),
                     filters.create(self_share_command_filter),
                 ))
-                client.start()
                 clients[account_id] = client
                 print(f"watching userbot account_id={account_id} phone={account.get('phone_number')}", flush=True)
             except Exception as exc:
