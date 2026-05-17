@@ -961,6 +961,16 @@ def is_share_command(message) -> bool:
     return text == "!share" or text.startswith("!share ")
 
 
+def is_ping_command(message) -> bool:
+    text = command_text(message).lower()
+
+    return text == "!ping" or text.startswith("!ping ")
+
+
+def is_userbot_command(message) -> bool:
+    return is_share_command(message) or is_ping_command(message)
+
+
 def reply_text_for_share(reply) -> str:
     return (
         getattr(reply, "text", None)
@@ -970,7 +980,7 @@ def reply_text_for_share(reply) -> str:
 
 
 def is_self_command_message(message) -> bool:
-    if not is_share_command(message):
+    if not is_userbot_command(message):
         return False
 
     # Pyrogram does not consistently mark outgoing/self messages across all
@@ -1126,6 +1136,64 @@ def notify_share_status(client: Client, message, text: str) -> None:
             pass
 
 
+def handle_ping_command(client: Client, message, account_id: int) -> None:
+    if not is_self_command_message(message) or not is_ping_command(message):
+        return
+
+    print(
+        f"!ping command received account_id={account_id} chat_id={getattr(getattr(message, 'chat', None), 'id', None)} message_id={getattr(message, 'id', None)}",
+        flush=True,
+    )
+
+    username = "-"
+    active_groups = 0
+    account_status = "-"
+
+    try:
+        me = client.get_me()
+        username = getattr(me, "username", None) or getattr(me, "first_name", None) or str(getattr(me, "id", "-"))
+    except Exception as exc:
+        username = f"get_me gagal: {short_error(str(exc), 120)}"
+
+    try:
+        config = load_config()
+
+        with db_connect(config) as conn:
+            account = fetch_one(
+                conn,
+                "select auth_status from telegram_client_accounts where id = %s limit 1",
+                (account_id,),
+            )
+            account_status = account["auth_status"] if account else "not_found"
+
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    select count(*) as total
+                    from telegram_client_groups
+                    where telegram_client_account_id = %s and status = 'active'
+                    """,
+                    (account_id,),
+                )
+                active_groups = int(cursor.fetchone()["total"])
+    except Exception as exc:
+        account_status = f"db gagal: {short_error(str(exc), 120)}"
+
+    notify_share_status(
+        client,
+        message,
+        "\n".join([
+            "pong",
+            f"Watcher: aktif",
+            f"Account ID: {account_id}",
+            f"Userbot: {username}",
+            f"Status DB: {account_status}",
+            f"Grup aktif: {active_groups}",
+            f"Waktu: {time.strftime('%Y-%m-%d %H:%M:%S')} UTC",
+        ]),
+    )
+
+
 def handle_share_command(client: Client, message, account_id: int, delay_seconds: float) -> None:
     if not is_self_command_message(message):
         return
@@ -1261,7 +1329,15 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
     notify_share_status(client, message, result_text)
 
 
-def poll_saved_messages_for_share(
+def handle_userbot_command(client: Client, message, account_id: int, delay_seconds: float) -> None:
+    if is_ping_command(message):
+        handle_ping_command(client, message, account_id)
+        return
+
+    handle_share_command(client, message, account_id, delay_seconds)
+
+
+def poll_saved_messages_for_commands(
     client: Client,
     account_id: int,
     delay_seconds: float,
@@ -1279,17 +1355,17 @@ def poll_saved_messages_for_share(
         if message_id is None or message_id in processed_message_ids:
             continue
 
-        if not is_share_command(message):
+        if not is_userbot_command(message):
             continue
 
         processed_message_ids.add(message_id)
-        print(f"!share command found by saved-messages poll account_id={account_id} message_id={message_id}", flush=True)
+        print(f"userbot command found by saved-messages poll account_id={account_id} message_id={message_id} text={command_text(message)}", flush=True)
 
         try:
-            handle_share_command(client, message, account_id, delay_seconds)
+            handle_userbot_command(client, message, account_id, delay_seconds)
         except Exception as exc:
-            print(f"saved messages !share handling failed account_id={account_id} message_id={message_id}: {exc}", flush=True)
-            notify_share_status(client, message, f"Gagal memproses !share: {short_error(str(exc), 350)}")
+            print(f"saved messages command handling failed account_id={account_id} message_id={message_id}: {exc}", flush=True)
+            notify_share_status(client, message, f"Gagal memproses command: {short_error(str(exc), 350)}")
 
 
 def mark_account_authorized_from_running_client(conn, account: dict[str, Any], client: Client) -> None:
@@ -1395,7 +1471,7 @@ def watch_shares(delay_seconds: float = 5.0, refresh_seconds: int = 30) -> None:
                         mark_account_authorized_from_running_client(conn, account, client)
 
                     client.add_handler(MessageHandler(
-                        lambda client, message, account_id=account_id: handle_share_command(
+                        lambda client, message, account_id=account_id: handle_userbot_command(
                             client,
                             message,
                             account_id,
@@ -1417,7 +1493,7 @@ def watch_shares(delay_seconds: float = 5.0, refresh_seconds: int = 30) -> None:
 
             for account_id, client in list(clients.items()):
                 try:
-                    poll_saved_messages_for_share(
+                    poll_saved_messages_for_commands(
                         client,
                         account_id,
                         delay_seconds,
