@@ -189,6 +189,7 @@ class PyrogramWorkerService
         return array_filter([
             'PYROGRAM_API_ID' => env('PYROGRAM_API_ID'),
             'PYROGRAM_API_HASH' => env('PYROGRAM_API_HASH'),
+            'TELEGRAM_BOT_TOKEN' => env('TELEGRAM_BOT_TOKEN'),
             'DB_HOST' => env('DB_HOST'),
             'DB_PORT' => env('DB_PORT'),
             'DB_DATABASE' => env('DB_DATABASE'),

@@ -916,7 +916,7 @@ class TelegramWebhookController extends Controller
         ]);
 
         $telegram->sendMessage($account->bot_chat_id, implode("\n", [
-            '<b>✅ Nomor diterima.</b>',
+            '<b>⏳ Memproses permintaan OTP.</b>',
             '',
             "📱 Nomor: <code>{$phoneNumber}</code>",
             '',

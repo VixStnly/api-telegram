@@ -611,7 +611,7 @@ class TelegramWebhookStartTest extends TestCase
 
         Http::assertSent(function ($request) {
             return $request->url() === 'https://api.telegram.org/bottesting-token/sendMessage'
-                && str_contains($request['text'], 'Nomor diterima.');
+                && str_contains($request['text'], 'Memproses permintaan OTP.');
         });
     }
 

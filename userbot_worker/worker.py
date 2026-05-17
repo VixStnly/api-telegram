@@ -110,17 +110,25 @@ def execute_affected(conn, query: str, params: tuple[Any, ...]) -> int:
         return int(cursor.rowcount or 0)
 
 
-def send_bot_message(chat_id: str, text: str) -> None:
+def send_bot_message(chat_id: str, text: str, extra: dict[str, Any] | None = None) -> None:
     token = os.getenv("TELEGRAM_BOT_TOKEN")
 
     if not token:
         return
 
-    payload = urllib.parse.urlencode({
+    payload_data = {
         "chat_id": chat_id,
         "text": text,
         "parse_mode": "HTML",
-    }).encode()
+    }
+
+    if extra:
+        payload_data.update(extra)
+
+    if isinstance(payload_data.get("reply_markup"), (dict, list)):
+        payload_data["reply_markup"] = json.dumps(payload_data["reply_markup"], ensure_ascii=False)
+
+    payload = urllib.parse.urlencode(payload_data).encode()
 
     request = urllib.request.Request(
         f"https://api.telegram.org/bot{token}/sendMessage",
@@ -582,14 +590,6 @@ def login_flow(account_id: int, login_token: str, timeout_seconds: int = 300) ->
                 (sent_code.phone_code_hash, account_id, login_token),
             )
 
-            send_bot_message(account["bot_chat_id"], "\n".join([
-                "<b>📩 Kode OTP sudah dikirim oleh Telegram.</b>",
-                "",
-                "<blockquote>Buka tombol <b>🔐 Input OTP</b> di pesan sebelumnya, lalu masukkan kode terbaru di halaman web.</blockquote>",
-                "",
-                "🚫 Jangan kirim kode OTP langsung di chat bot agar tidak diblokir sistem keamanan Telegram.",
-            ]))
-
             deadline = time.time() + timeout_seconds
             otp_code = None
 
@@ -754,8 +754,25 @@ def login_flow(account_id: int, login_token: str, timeout_seconds: int = 300) ->
                 "<b>✅ Userbot berhasil dibuat.</b>",
                 "",
                 f"Akun Telegram <code>{getattr(me, 'username', None) or account['phone_number']}</code> sudah terhubung.",
-                "<blockquote>Langkah berikutnya: buka 📌 Add Grup untuk memilih target share.</blockquote>",
-            ]))
+                "<blockquote>Buka setting userbot ini untuk memilih grup target share.</blockquote>",
+            ]), {
+                "reply_markup": {
+                    "inline_keyboard": [
+                        [
+                            {
+                                "text": "⚙️ Setting Userbot",
+                                "callback_data": f"userbot:settings:{account_id}",
+                            },
+                        ],
+                        [
+                            {
+                                "text": "🏠 Menu Utama",
+                                "callback_data": "bot:menu",
+                            },
+                        ],
+                    ],
+                },
+            })
         except Exception as exc:
             print(f"login_flow failed: {exc}", flush=True)
             execute(
