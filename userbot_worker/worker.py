@@ -1469,12 +1469,8 @@ def watch_shares(delay_seconds: float = 5.0, refresh_seconds: int = 30) -> None:
                         """
                         select * from telegram_client_accounts
                         where is_active = 1
-                          and (
-                            auth_status = 'authorized'
-                            or session_string is not null
-                            or pending_session_string is not null
-                            or auth_status in ('sending_code', 'awaiting_code', 'awaiting_password')
-                          )
+                          and auth_status = 'authorized'
+                          and (session_string is not null or pending_session_string is not null)
                         order by id asc
                         """
                     )

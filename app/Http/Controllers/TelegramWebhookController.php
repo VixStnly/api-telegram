@@ -165,7 +165,14 @@ class TelegramWebhookController extends Controller
 
             if ($text === '/debug_share' && $chatId !== '') {
                 $watcher = $pyrogram->ensureShareWatcherRunning();
-                $account = $this->currentClientAccountForChat($chatId);
+                $account = TelegramClientAccount::where('bot_chat_id', $chatId)
+                    ->where('auth_status', 'authorized')
+                    ->where(function ($query) {
+                        $query->whereNotNull('session_string')
+                            ->orWhereNotNull('pending_session_string');
+                    })
+                    ->latest()
+                    ->first();
                 $logPath = storage_path('logs/userbot-share-watcher.log');
                 $log = is_file($logPath) ? file_get_contents($logPath) : 'Log watcher belum ada.';
                 $log = Str::limit(trim((string) $log), 2500);
