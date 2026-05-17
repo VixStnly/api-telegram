@@ -132,6 +132,18 @@ def send_bot_message(chat_id: str, text: str) -> None:
         pass
 
 
+def try_send_bot_message(chat_id: str | None, text: str) -> bool:
+    if not chat_id:
+        return False
+
+    try:
+        send_bot_message(chat_id, text)
+        return True
+    except Exception as exc:
+        print(f"bot status message failed chat_id={chat_id}: {exc}", flush=True)
+        return False
+
+
 def installed_message() -> str:
     return "\n".join([
         "✅ Userbot berhasil dipasang.",
@@ -1388,14 +1400,16 @@ def notify_share_status(client: Client, message, text: str, status_message=None)
             return None
 
 
-def should_update_share_status(index: int, total: int, last_update_at: float, every_groups: int = 10, every_seconds: float = 2.0) -> bool:
-    if index == 1 or index == total:
-        return True
+def build_share_result_text(sent_count: int, failed_count: int, failed_errors: list[str]) -> str:
+    result_text = f"✅ Share selesai.\n\nBerhasil: {sent_count}\nGagal: {failed_count}"
 
-    if every_groups > 0 and index % every_groups == 0:
-        return True
+    if sent_count:
+        result_text += "\n\n⚡ Pesan berhasil dikirim ke grup target."
 
-    return (time.monotonic() - last_update_at) >= every_seconds
+    if failed_errors:
+        result_text += "\n\n⚠️ Gagal pertama:\n" + short_error(failed_errors[0])
+
+    return result_text
 
 
 def handle_ping_command(client: Client, message, account_id: int) -> None:
@@ -1468,16 +1482,12 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
         sent_count = 0
         failed_count = 0
         failed_errors = []
-        status_message = None
-        last_status_update_at = 0.0
 
         try:
-            status_message = notify_share_status(
-                client,
-                message,
-                f"⚡ Memproses share ke {len(groups)} grup...\n✅ Berhasil: 0\n❌ Gagal: 0",
+            try_send_bot_message(
+                account.get("bot_chat_id"),
+                f"⚡ Memproses share ke {len(groups)} grup...",
             )
-            last_status_update_at = time.monotonic()
 
             for index, group in enumerate(groups, start=1):
                 group_name = group.get("title") or group.get("chat_id") or f"grup #{index}"
@@ -1502,19 +1512,6 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
                         (str(copied.id), delivery_id),
                     )
                     update_share_progress(conn, share_id, len(groups), sent_count, failed_count)
-                    if should_update_share_status(index, len(groups), last_status_update_at):
-                        status_message = notify_share_status(
-                            client,
-                            message,
-                            "\n".join([
-                                f"⚡ Memproses share ke {len(groups)} grup...",
-                                f"✅ Terkirim {index}/{len(groups)}: {group_name}",
-                                f"✅ Berhasil: {sent_count}",
-                                f"❌ Gagal: {failed_count}",
-                            ]),
-                            status_message,
-                        )
-                        last_status_update_at = time.monotonic()
                 except Exception as exc:
                     failed_count += 1
                     duration = time.monotonic() - started_at
@@ -1541,19 +1538,6 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
                         """,
                         (group["id"],),
                     )
-                    status_message = notify_share_status(
-                        client,
-                        message,
-                        "\n".join([
-                            f"⚡ Memproses share ke {len(groups)} grup...",
-                            f"❌ Gagal {index}/{len(groups)}: {group_name}",
-                            f"✅ Berhasil: {sent_count}",
-                            f"❌ Gagal: {failed_count}",
-                            "",
-                            user_friendly_delivery_error(error_text),
-                        ]),
-                        status_message,
-                    )
 
                 if delay_seconds > 0 and index < len(groups):
                     time.sleep(delay_seconds)
@@ -1567,16 +1551,11 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
             print(f"share command interrupted account_id={account_id} share_id={share_id}: {exc}", flush=True)
             mark_share_interrupted(conn, share_id, len(groups), sent_count, failed_count, exc)
             raise
+        result_text = build_share_result_text(sent_count, failed_count, failed_errors)
+        bot_status_sent = try_send_bot_message(account.get("bot_chat_id"), result_text)
 
-    result_text = f"✅ Share selesai.\n\nBerhasil: {sent_count}\nGagal: {failed_count}"
-
-    if sent_count:
-        result_text += "\n\n⚡ Pesan berhasil dikirim ke grup target."
-
-    if failed_errors:
-        result_text += "\n\n⚠️ Gagal pertama:\n" + short_error(failed_errors[0])
-
-    notify_share_status(client, message, result_text, status_message)
+    if not bot_status_sent:
+        notify_share_status(client, message, result_text)
 
 
 def handle_userbot_command(client: Client, message, account_id: int, delay_seconds: float) -> None:
