@@ -1149,6 +1149,32 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
     )
 
 
+def poll_saved_messages_for_share(
+    client: Client,
+    account_id: int,
+    delay_seconds: float,
+    processed_message_ids: set[int],
+) -> None:
+    try:
+        messages = list(client.get_chat_history("me", limit=10))
+    except Exception as exc:
+        print(f"saved messages poll failed account_id={account_id}: {exc}", flush=True)
+        return
+
+    for message in reversed(messages):
+        message_id = getattr(message, "id", None)
+
+        if message_id is None or message_id in processed_message_ids:
+            continue
+
+        if not is_share_command(message):
+            continue
+
+        processed_message_ids.add(message_id)
+        print(f"!share command found by saved-messages poll account_id={account_id} message_id={message_id}", flush=True)
+        handle_share_command(client, message, account_id, delay_seconds)
+
+
 def mark_account_authorized_from_running_client(conn, account: dict[str, Any], client: Client) -> None:
     if account.get("auth_status") == "authorized":
         return
@@ -1196,6 +1222,7 @@ def mark_account_authorized_from_running_client(conn, account: dict[str, Any], c
 def watch_shares(delay_seconds: float = 5.0, refresh_seconds: int = 30) -> None:
     config = load_config()
     clients: dict[int, Client] = {}
+    saved_message_processed_ids: dict[int, set[int]] = {}
 
     print("share watcher started", flush=True)
 
@@ -1227,6 +1254,7 @@ def watch_shares(delay_seconds: float = 5.0, refresh_seconds: int = 30) -> None:
                 except Exception as exc:
                     print(f"watcher stop failed account_id={account_id}: {exc}", flush=True)
                 clients.pop(account_id, None)
+                saved_message_processed_ids.pop(account_id, None)
 
         for account in accounts:
             account_id = int(account["id"])
@@ -1251,6 +1279,7 @@ def watch_shares(delay_seconds: float = 5.0, refresh_seconds: int = 30) -> None:
                     filters.all,
                 ))
                 clients[account_id] = client
+                saved_message_processed_ids.setdefault(account_id, set())
                 print(f"watching userbot account_id={account_id} phone={account.get('phone_number')}", flush=True)
             except Exception as exc:
                 print(f"watcher start failed account_id={account_id}: {exc}", flush=True)
@@ -1261,7 +1290,15 @@ def watch_shares(delay_seconds: float = 5.0, refresh_seconds: int = 30) -> None:
                     except Exception as notify_exc:
                         print(f"watcher session error notify failed account_id={account_id}: {notify_exc}", flush=True)
 
-        time.sleep(refresh_seconds)
+        for account_id, client in list(clients.items()):
+            poll_saved_messages_for_share(
+                client,
+                account_id,
+                delay_seconds,
+                saved_message_processed_ids.setdefault(account_id, set()),
+            )
+
+        time.sleep(max(1, min(refresh_seconds, 5)))
 
 
 def main() -> None:
