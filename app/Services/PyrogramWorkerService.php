@@ -84,6 +84,33 @@ class PyrogramWorkerService
         ];
     }
 
+    public function ensureShareWatcherRunning(): array
+    {
+        $python = base_path('userbot_worker/.venv/bin/python');
+        $worker = base_path('userbot_worker/worker.py');
+        $log = storage_path('logs/userbot-share-watcher.log');
+
+        $command = sprintf(
+            'nohup %s %s watch-shares --delay %s --refresh %s >> %s 2>&1 & echo $!',
+            escapeshellarg($python),
+            escapeshellarg($worker),
+            escapeshellarg((string) env('SHARE_DELAY', 5)),
+            escapeshellarg((string) env('SHARE_REFRESH', 5)),
+            escapeshellarg($log)
+        );
+
+        $result = Process::path(base_path())
+            ->env($this->workerEnvironment())
+            ->run(['sh', '-c', $command]);
+
+        return [
+            'ok' => $result->successful(),
+            'output' => trim($result->output()),
+            'error' => trim($result->errorOutput()),
+            'exit_code' => $result->exitCode(),
+        ];
+    }
+
     protected function run(array $arguments): array
     {
         return $this->runRaw(array_merge(['worker.py'], $arguments));

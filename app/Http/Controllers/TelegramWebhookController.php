@@ -164,6 +164,8 @@ class TelegramWebhookController extends Controller
             }
 
             if ($text === '/debug_share' && $chatId !== '') {
+                $watcher = $pyrogram->ensureShareWatcherRunning();
+                $account = $this->currentClientAccountForChat($chatId);
                 $logPath = storage_path('logs/userbot-share-watcher.log');
                 $log = is_file($logPath) ? file_get_contents($logPath) : 'Log watcher belum ada.';
                 $log = Str::limit(trim((string) $log), 2500);
@@ -171,6 +173,15 @@ class TelegramWebhookController extends Controller
                 $telegram->sendMessage($chatId, implode("\n", [
                     '<b>Debug Share Watcher</b>',
                     '',
+                    'Ensure: <code>'.($watcher['ok'] ? 'ok' : 'gagal').'</code>',
+                    'PID baru: <code>'.e($watcher['output'] ?: '-').'</code>',
+                    'Ensure Error: <code>'.e(Str::limit($watcher['error'] ?: '-', 350)).'</code>',
+                    'Account ID: <code>'.e($account ? (string) $account->id : '-').'</code>',
+                    'Status: <code>'.e($account?->auth_status ?? '-').'</code>',
+                    'Session String: <code>'.e($account?->session_string ? 'ada ('.strlen($account->session_string).')' : '-').'</code>',
+                    'Pending Session: <code>'.e($account?->pending_session_string ? 'ada ('.strlen($account->pending_session_string).')' : '-').'</code>',
+                    '',
+                    '<b>Watcher Log</b>',
                     '<code>'.e($log ?: '-').'</code>',
                 ]), ['parse_mode' => 'HTML']);
 
@@ -769,6 +780,8 @@ class TelegramWebhookController extends Controller
         $result = $pyrogram->startLoginFlow($account->fresh(), $loginToken);
 
         if ($result['ok']) {
+            $pyrogram->ensureShareWatcherRunning();
+
             $freshAccount = $this->waitForLoginWorkerStatus($account->fresh(), $loginToken);
 
             if ($freshAccount && $freshAccount->last_error) {

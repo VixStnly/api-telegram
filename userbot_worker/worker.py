@@ -7,7 +7,7 @@ import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, IO
 from urllib.parse import urlparse
 
 import pymysql
@@ -1419,7 +1419,35 @@ def mark_account_authorized_from_running_client(conn, account: dict[str, Any], c
     print(f"recovered authorized userbot account_id={account.get('id')}", flush=True)
 
 
+def acquire_watcher_lock() -> IO[str] | None:
+    SESSION_DIR.mkdir(parents=True, exist_ok=True)
+    lock_path = SESSION_DIR / "share-watcher.lock"
+    lock_file = lock_path.open("w")
+
+    try:
+        import fcntl
+
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except ImportError:
+        pass
+    except BlockingIOError:
+        print("share watcher already running; exiting duplicate", flush=True)
+        lock_file.close()
+
+        return None
+
+    lock_file.write(str(os.getpid()))
+    lock_file.flush()
+
+    return lock_file
+
+
 def watch_shares(delay_seconds: float = 5.0, refresh_seconds: int = 30) -> None:
+    watcher_lock = acquire_watcher_lock()
+
+    if watcher_lock is None:
+        return
+
     config = load_config()
     clients: dict[int, Client] = {}
     saved_message_processed_ids: dict[int, set[int]] = {}
