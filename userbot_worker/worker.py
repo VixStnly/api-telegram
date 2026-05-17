@@ -1044,6 +1044,43 @@ def update_share_totals(conn, share_id: int, total: int, sent: int, failed: int,
     )
 
 
+def update_share_progress(conn, share_id: int, total: int, sent: int, failed: int) -> None:
+    execute(
+        conn,
+        """
+        update share_messages
+        set total_groups = %s,
+            sent_count = %s,
+            failed_count = %s,
+            status = 'running',
+            updated_at = now()
+        where id = %s
+        """,
+        (total, sent, failed, share_id),
+    )
+
+
+def mark_share_interrupted(conn, share_id: int, total: int, sent: int, failed: int, error: Exception) -> None:
+    status = "partial" if sent > 0 else "failed"
+
+    execute(
+        conn,
+        """
+        update share_messages
+        set total_groups = %s,
+            sent_count = %s,
+            failed_count = %s,
+            status = %s,
+            completed_at = now(),
+            last_error = %s,
+            updated_at = now()
+        where id = %s
+          and status = 'running'
+        """,
+        (total, sent, failed, status, short_error(str(error), 1000), share_id),
+    )
+
+
 def command_text(message) -> str:
     return (getattr(message, "text", None) or getattr(message, "caption", None) or "").strip()
 
@@ -1212,8 +1249,23 @@ def warm_group_peer(client: Client, group: dict[str, Any]):
     return target
 
 
-def forward_source_message_to_group(client: Client, group: dict[str, Any], source_chat_id, message_id: int):
+def resolve_group_target(client: Client, group: dict[str, Any]):
     target = target_for_group(group)
+
+    if not isinstance(target, int):
+        return target
+
+    warmed_target = warm_group_peer(client, group)
+
+    if str(warmed_target) == str(target):
+        title = group.get("title") or group.get("chat_id") or target
+        raise RuntimeError(f"PEER_ID_INVALID: userbot belum bisa resolve grup {title}. Buka Add Grup ulang lalu pilih grup ini lagi.")
+
+    return warmed_target
+
+
+def forward_source_message_to_group(client: Client, group: dict[str, Any], source_chat_id, message_id: int):
+    target = resolve_group_target(client, group)
 
     try:
         forwarded = client.forward_messages(
@@ -1248,7 +1300,7 @@ def forward_source_message_to_group(client: Client, group: dict[str, Any], sourc
 
 
 def send_replied_message_to_group(client: Client, group: dict[str, Any], command_message, reply):
-    target = target_for_group(group)
+    target = resolve_group_target(client, group)
     source = source_chat_for_copy(client, command_message)
     reply_text = (getattr(reply, "text", None) or "").strip()
 
@@ -1406,82 +1458,101 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
         sent_count = 0
         failed_count = 0
         failed_errors = []
+        status_message = None
 
-        status_message = notify_share_status(
-            client,
-            message,
-            f"⚡ Memproses share ke {len(groups)} grup...\n✅ Berhasil: 0\n❌ Gagal: 0",
-        )
+        try:
+            status_message = notify_share_status(
+                client,
+                message,
+                f"⚡ Memproses share ke {len(groups)} grup...\n✅ Berhasil: 0\n❌ Gagal: 0",
+            )
 
-        for index, group in enumerate(groups, start=1):
-            group_name = group.get("title") or group.get("chat_id") or f"grup #{index}"
-            delivery_id = create_delivery(conn, share_id, group)
-            started_at = time.monotonic()
+            for index, group in enumerate(groups, start=1):
+                group_name = group.get("title") or group.get("chat_id") or f"grup #{index}"
+                delivery_id = create_delivery(conn, share_id, group)
+                started_at = time.monotonic()
 
-            try:
-                copied = send_replied_message_to_group(client, group, message, reply)
-                sent_count += 1
-                duration = time.monotonic() - started_at
-                print(f"share delivery sent account_id={account_id} group={group_name} seconds={duration:.2f}", flush=True)
-                execute(
-                    conn,
-                    """
-                    update share_message_deliveries
-                    set status = 'sent',
-                        telegram_message_id = %s,
-                        sent_at = now(),
-                        updated_at = now()
-                    where id = %s
-                    """,
-                    (str(copied.id), delivery_id),
-                )
-            except Exception as exc:
-                failed_count += 1
-                duration = time.monotonic() - started_at
-                error_text = str(exc)
-                print(f"share delivery failed account_id={account_id} group={group_name} seconds={duration:.2f} error={error_text}", flush=True)
-                failed_errors.append(f"{group.get('title') or group.get('chat_id')}: {user_friendly_delivery_error(error_text)}")
-                execute(
-                    conn,
-                    """
-                    update share_message_deliveries
-                    set status = 'failed',
-                        error_message = %s,
-                        updated_at = now()
-                    where id = %s
-                    """,
-                    (error_text, delivery_id),
-                )
-                execute(
-                    conn,
-                    """
-                    delete from telegram_client_groups
-                    where id = %s
-                    """,
-                    (group["id"],),
-                )
-                status_message = notify_share_status(
-                    client,
-                    message,
-                    "\n".join([
-                        f"⚡ Memproses share ke {len(groups)} grup...",
-                        f"❌ Gagal {index}/{len(groups)}: {group_name}",
-                        f"✅ Berhasil: {sent_count}",
-                        f"❌ Gagal: {failed_count}",
-                        "",
-                        user_friendly_delivery_error(error_text),
-                    ]),
-                    status_message,
-                )
+                try:
+                    copied = send_replied_message_to_group(client, group, message, reply)
+                    sent_count += 1
+                    duration = time.monotonic() - started_at
+                    print(f"share delivery sent account_id={account_id} group={group_name} seconds={duration:.2f}", flush=True)
+                    execute(
+                        conn,
+                        """
+                        update share_message_deliveries
+                        set status = 'sent',
+                            telegram_message_id = %s,
+                            sent_at = now(),
+                            updated_at = now()
+                        where id = %s
+                        """,
+                        (str(copied.id), delivery_id),
+                    )
+                    update_share_progress(conn, share_id, len(groups), sent_count, failed_count)
+                    status_message = notify_share_status(
+                        client,
+                        message,
+                        "\n".join([
+                            f"⚡ Memproses share ke {len(groups)} grup...",
+                            f"✅ Terkirim {index}/{len(groups)}: {group_name}",
+                            f"✅ Berhasil: {sent_count}",
+                            f"❌ Gagal: {failed_count}",
+                        ]),
+                        status_message,
+                    )
+                except Exception as exc:
+                    failed_count += 1
+                    duration = time.monotonic() - started_at
+                    error_text = str(exc)
+                    print(f"share delivery failed account_id={account_id} group={group_name} seconds={duration:.2f} error={error_text}", flush=True)
+                    failed_errors.append(f"{group.get('title') or group.get('chat_id')}: {user_friendly_delivery_error(error_text)}")
+                    execute(
+                        conn,
+                        """
+                        update share_message_deliveries
+                        set status = 'failed',
+                            error_message = %s,
+                            updated_at = now()
+                        where id = %s
+                        """,
+                        (error_text, delivery_id),
+                    )
+                    update_share_progress(conn, share_id, len(groups), sent_count, failed_count)
+                    execute(
+                        conn,
+                        """
+                        delete from telegram_client_groups
+                        where id = %s
+                        """,
+                        (group["id"],),
+                    )
+                    status_message = notify_share_status(
+                        client,
+                        message,
+                        "\n".join([
+                            f"⚡ Memproses share ke {len(groups)} grup...",
+                            f"❌ Gagal {index}/{len(groups)}: {group_name}",
+                            f"✅ Berhasil: {sent_count}",
+                            f"❌ Gagal: {failed_count}",
+                            "",
+                            user_friendly_delivery_error(error_text),
+                        ]),
+                        status_message,
+                    )
 
-            if delay_seconds > 0 and index < len(groups):
-                time.sleep(delay_seconds)
+                if delay_seconds > 0 and index < len(groups):
+                    time.sleep(delay_seconds)
 
-        status = "sent" if failed_count == 0 else "partial"
-        if sent_count == 0:
-            status = "failed"
+            status = "sent" if failed_count == 0 else "partial"
+            if sent_count == 0:
+                status = "failed"
 
-        update_share_totals(conn, share_id, len(groups), sent_count, failed_count, status)
+            update_share_totals(conn, share_id, len(groups), sent_count, failed_count, status)
+        except Exception as exc:
+            print(f"share command interrupted account_id={account_id} share_id={share_id}: {exc}", flush=True)
+            mark_share_interrupted(conn, share_id, len(groups), sent_count, failed_count, exc)
+            raise
 
     result_text = f"✅ Share selesai.\n\nBerhasil: {sent_count}\nGagal: {failed_count}"
 
