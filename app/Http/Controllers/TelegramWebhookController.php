@@ -33,6 +33,7 @@ class TelegramWebhookController extends Controller
 
         try {
             $update = $request->all();
+            $rawUpdate = json_decode($request->getContent(), true) ?: [];
             $callbackQuery = $update['callback_query'] ?? null;
 
             if ($callbackQuery) {
@@ -42,6 +43,7 @@ class TelegramWebhookController extends Controller
             }
 
             $message = $update['message'] ?? null;
+            $rawMessage = $rawUpdate['message'] ?? [];
 
             if (! $message) {
                 return response()->json(['ok' => true]);
@@ -49,7 +51,8 @@ class TelegramWebhookController extends Controller
 
             $chat = $message['chat'] ?? [];
             $from = $message['from'] ?? [];
-            $text = trim((string) ($message['text'] ?? ''));
+            $rawText = (string) ($rawMessage['text'] ?? $message['text'] ?? '');
+            $text = trim($rawText);
             $chatId = (string) ($chat['id'] ?? '');
 
             if (in_array(($chat['type'] ?? ''), ['group', 'supergroup', 'channel'])) {
@@ -71,14 +74,17 @@ class TelegramWebhookController extends Controller
 
             if ($text === '/start' && $chatId !== '') {
                 $account = $this->registerClientAccount($chatId, $from);
-                $account->update([
-                    'auth_status' => 'idle',
-                    'phone_code_hash' => null,
-                    'pending_otp_code' => null,
-                    'pending_session_string' => null,
-                    'pending_login_token' => null,
-                    'last_error' => null,
-                ]);
+
+                if ($account->auth_status !== 'authorized') {
+                    $account->update([
+                        'auth_status' => 'idle',
+                        'phone_code_hash' => null,
+                        'pending_otp_code' => null,
+                        'pending_session_string' => null,
+                        'pending_login_token' => null,
+                        'last_error' => null,
+                    ]);
+                }
 
                 $telegram->sendMessage($chatId, $this->welcomeMessage(), [
                     'parse_mode' => 'HTML',
@@ -103,6 +109,7 @@ class TelegramWebhookController extends Controller
                     'Status: <code>'.e($account->auth_status).'</code>',
                     'Nomor: <code>'.e($account->phone_number ?? '-').'</code>',
                     'Session: <code>'.e($account->session_name).'</code>',
+                    'Session String: <code>'.e($account->session_string ? 'ada ('.strlen($account->session_string).')' : '-').'</code>',
                     'Code Hash: <code>'.e($account->phone_code_hash ? 'ada ('.strlen($account->phone_code_hash).')' : '-').'</code>',
                     'Pending Session: <code>'.e($account->pending_session_string ? 'ada ('.strlen($account->pending_session_string).')' : '-').'</code>',
                     'Login Token: <code>'.e($account->pending_login_token ? Str::limit($account->pending_login_token, 8, '') : '-').'</code>',
@@ -172,8 +179,9 @@ class TelegramWebhookController extends Controller
 
             if ($chatId !== '' && ($chat['type'] ?? '') === 'private') {
                 $account = $this->findOrRegisterClientAccount($chatId, $from);
+                $onboardingText = $account->auth_status === 'awaiting_password' ? $rawText : $text;
 
-                if ($this->handleOnboardingMessage($account, $text, $telegram, $pyrogram)) {
+                if ($this->handleOnboardingMessage($account, $onboardingText, $telegram, $pyrogram)) {
                     return response()->json(['ok' => true]);
                 }
             }
@@ -254,10 +262,21 @@ class TelegramWebhookController extends Controller
 
         if ($data === 'userbot:create') {
             $account = $this->findOrRegisterClientAccount($chatId, $from);
+
+            if ($account->auth_status === 'authorized') {
+                $telegram->sendMessage($chatId, $this->userbotSettingsMessage($account), [
+                    'parse_mode' => 'HTML',
+                    'reply_markup' => $this->userbotSettingsKeyboard($account),
+                ]);
+
+                return;
+            }
+
             $account->update([
                 'auth_status' => 'awaiting_phone',
                 'phone_code_hash' => null,
                 'pending_session_string' => null,
+                'pending_2fa_password' => null,
                 'pending_login_token' => null,
                 'last_error' => null,
                 'last_seen_at' => now(),
@@ -679,6 +698,7 @@ class TelegramWebhookController extends Controller
             'phone_code_hash' => null,
             'pending_otp_code' => null,
             'pending_session_string' => null,
+            'pending_2fa_password' => null,
             'pending_login_token' => $loginToken,
             'last_error' => null,
             'last_seen_at' => now(),
@@ -808,35 +828,14 @@ class TelegramWebhookController extends Controller
         TelegramBotService $telegram,
         PyrogramWorkerService $pyrogram
     ): bool {
-        $telegram->sendMessage($account->bot_chat_id, 'Password diterima. Sedang menyelesaikan login...');
-
-        $result = $pyrogram->signIn($account, '', $text);
-        $status = $result['data']['status'] ?? null;
-
-        if ($result['ok'] && $status === 'authorized') {
-            $account->fresh()->update([
-                'auth_status' => 'authorized',
-                'bot_username' => $result['data']['telegram_username'] ?? $account->bot_username,
-                'phone_code_hash' => null,
-                'pending_session_string' => null,
-                'last_error' => null,
-                'last_login_at' => now(),
-                'last_seen_at' => now(),
-            ]);
-
-            $telegram->sendMessage($account->bot_chat_id, '<b>Userbot berhasil dibuat.</b>', [
-                'parse_mode' => 'HTML',
-            ]);
-
-            return true;
-        }
-
         $account->fresh()->update([
             'auth_status' => 'awaiting_password',
-            'last_error' => $result['error'] ?: $result['output'],
+            'pending_2fa_password' => $text,
+            'last_error' => null,
+            'last_seen_at' => now(),
         ]);
 
-        $telegram->sendMessage($account->bot_chat_id, 'Password 2FA belum cocok. Coba kirim ulang password yang benar.');
+        $telegram->sendMessage($account->bot_chat_id, 'Password 2FA diterima. Sedang menyelesaikan login...');
 
         return true;
     }

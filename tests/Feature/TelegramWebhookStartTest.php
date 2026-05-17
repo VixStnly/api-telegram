@@ -116,6 +116,156 @@ class TelegramWebhookStartTest extends TestCase
         });
     }
 
+    public function test_start_command_does_not_reset_authorized_userbot(): void
+    {
+        config([
+            'services.telegram.bot_token' => 'testing-token',
+            'services.telegram.webhook_secret' => 'testing-secret',
+        ]);
+
+        Http::fake([
+            'https://api.telegram.org/bottesting-token/*' => Http::response(['ok' => true]),
+        ]);
+
+        $account = TelegramClientAccount::create([
+            'bot_chat_id' => '987654321',
+            'bot_user_id' => '987654321',
+            'phone_number' => '+6281234567890',
+            'session_name' => 'client_987654321_test',
+            'session_string' => 'saved-session',
+            'pending_session_string' => 'legacy-session',
+            'auth_status' => 'authorized',
+            'is_active' => true,
+        ]);
+
+        $response = $this
+            ->withHeader('X-Telegram-Bot-Api-Secret-Token', 'testing-secret')
+            ->postJson('/telegram/webhook', [
+                'update_id' => 20,
+                'message' => [
+                    'message_id' => 1,
+                    'text' => '/start',
+                    'from' => [
+                        'id' => 987654321,
+                        'is_bot' => false,
+                        'first_name' => 'Tester',
+                    ],
+                    'chat' => [
+                        'id' => 987654321,
+                        'type' => 'private',
+                    ],
+                ],
+            ]);
+
+        $response->assertOk()->assertJson(['ok' => true]);
+
+        $account->refresh();
+
+        $this->assertSame('authorized', $account->auth_status);
+        $this->assertSame('saved-session', $account->session_string);
+        $this->assertSame('legacy-session', $account->pending_session_string);
+    }
+
+    public function test_create_userbot_button_does_not_reset_authorized_userbot(): void
+    {
+        config([
+            'services.telegram.bot_token' => 'testing-token',
+            'services.telegram.webhook_secret' => 'testing-secret',
+        ]);
+
+        Http::fake([
+            'https://api.telegram.org/bottesting-token/*' => Http::response(['ok' => true]),
+        ]);
+
+        $account = TelegramClientAccount::create([
+            'bot_chat_id' => '987654321',
+            'bot_user_id' => '987654321',
+            'phone_number' => '+6281234567890',
+            'session_name' => 'client_987654321_test',
+            'session_string' => 'saved-session',
+            'auth_status' => 'authorized',
+            'is_active' => true,
+        ]);
+
+        $response = $this
+            ->withHeader('X-Telegram-Bot-Api-Secret-Token', 'testing-secret')
+            ->postJson('/telegram/webhook', [
+                'update_id' => 21,
+                'callback_query' => [
+                    'id' => 'callback-create-authorized',
+                    'data' => 'userbot:create',
+                    'from' => [
+                        'id' => 987654321,
+                        'is_bot' => false,
+                        'first_name' => 'Tester',
+                    ],
+                    'message' => [
+                        'message_id' => 15,
+                        'chat' => [
+                            'id' => 987654321,
+                            'type' => 'private',
+                        ],
+                    ],
+                ],
+            ]);
+
+        $response->assertOk()->assertJson(['ok' => true]);
+
+        $account->refresh();
+
+        $this->assertSame('authorized', $account->auth_status);
+        $this->assertSame('saved-session', $account->session_string);
+    }
+
+    public function test_two_factor_password_is_stored_for_running_login_worker(): void
+    {
+        config([
+            'services.telegram.bot_token' => 'testing-token',
+            'services.telegram.webhook_secret' => 'testing-secret',
+        ]);
+
+        Http::fake([
+            'https://api.telegram.org/bottesting-token/*' => Http::response(['ok' => true]),
+        ]);
+
+        $account = TelegramClientAccount::create([
+            'bot_chat_id' => '987654321',
+            'bot_user_id' => '987654321',
+            'phone_number' => '+6281234567890',
+            'session_name' => 'client_987654321_test',
+            'auth_status' => 'awaiting_password',
+            'pending_login_token' => 'login-token',
+            'is_active' => true,
+        ]);
+
+        $response = $this
+            ->withHeader('X-Telegram-Bot-Api-Secret-Token', 'testing-secret')
+            ->postJson('/telegram/webhook', [
+                'update_id' => 22,
+                'message' => [
+                    'message_id' => 17,
+                    'text' => '  exact 2fa password  ',
+                    'from' => [
+                        'id' => 987654321,
+                        'is_bot' => false,
+                        'first_name' => 'Tester',
+                    ],
+                    'chat' => [
+                        'id' => 987654321,
+                        'type' => 'private',
+                    ],
+                ],
+            ]);
+
+        $response->assertOk()->assertJson(['ok' => true]);
+
+        $account->refresh();
+
+        $this->assertSame('awaiting_password', $account->auth_status);
+        $this->assertSame('  exact 2fa password  ', $account->pending_2fa_password);
+        $this->assertNull($account->last_error);
+    }
+
     public function test_phone_number_is_saved_and_otp_is_requested(): void
     {
         config([

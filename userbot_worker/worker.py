@@ -126,6 +126,67 @@ def send_bot_message(chat_id: str, text: str) -> None:
         pass
 
 
+def installed_message() -> str:
+    return "\n".join([
+        "Userbot berhasil dipasang.",
+        "",
+        "Untuk mulai share:",
+        "1. Buka bot utama dari akun yang membuat userbot ini.",
+        "2. Pilih Add Grup, lalu ceklis grup target.",
+        "3. Di akun userbot ini, reply pesan yang mau dibagikan.",
+        "4. Ketik !share pada reply tersebut.",
+        "",
+        "Pesan akan dikirim ke grup yang sudah diceklis.",
+    ])
+
+
+def send_install_notice_to_saved_messages(app: Client) -> None:
+    try:
+        app.send_message("me", installed_message())
+    except Exception as exc:
+        print(f"saved messages notice failed: {exc}", flush=True)
+
+
+def wait_for_2fa_password(conn, account_id: int, login_token: str, deadline: float) -> str | None:
+    print("waiting for 2fa password", flush=True)
+
+    while time.time() < deadline:
+        latest = fetch_one(
+            conn,
+            """
+            select pending_2fa_password, pending_login_token
+            from telegram_client_accounts
+            where id = %s
+            limit 1
+            """,
+            (account_id,),
+        )
+
+        if latest and latest.get("pending_login_token") != login_token:
+            print("login token changed while waiting for 2fa; exiting old worker", flush=True)
+            return None
+
+        if latest and latest.get("pending_2fa_password"):
+            password = str(latest["pending_2fa_password"])
+            execute(
+                conn,
+                """
+                update telegram_client_accounts
+                set pending_2fa_password = null,
+                    updated_at = now()
+                where id = %s
+                  and pending_login_token = %s
+                """,
+                (account_id, login_token),
+            )
+
+            return password
+
+        time.sleep(2)
+
+    return None
+
+
 def client_for(account: dict[str, Any], config: dict[str, Any]) -> Client:
     SESSION_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -258,6 +319,12 @@ def sign_in(account_id: int, code: str, password: str | None = None) -> None:
                         app.check_password(password)
 
                 me = app.get_me()
+                send_install_notice_to_saved_messages(app)
+                session_string = None
+                try:
+                    session_string = app.export_session_string()
+                except Exception as exc:
+                    print(f"session string export failed: {exc}", flush=True)
             finally:
                 app.disconnect()
 
@@ -267,6 +334,8 @@ def sign_in(account_id: int, code: str, password: str | None = None) -> None:
                 update telegram_client_accounts
                 set auth_status = 'authorized',
                     bot_username = coalesce(bot_username, %s),
+                    session_string = %s,
+                    pending_session_string = %s,
                     last_login_at = now(),
                     last_seen_at = now(),
                     phone_code_hash = null,
@@ -274,7 +343,7 @@ def sign_in(account_id: int, code: str, password: str | None = None) -> None:
                     updated_at = now()
                 where id = %s
                 """,
-                (getattr(me, "username", None), account_id),
+                (getattr(me, "username", None), session_string, session_string, account_id),
             )
             print("authorized")
         except Exception as exc:
@@ -325,6 +394,12 @@ def sign_in_direct(
                     app.check_password(password)
 
             me = app.get_me()
+            send_install_notice_to_saved_messages(app)
+            session_string = None
+            try:
+                session_string = app.export_session_string()
+            except Exception as exc:
+                print(f"session string export failed: {exc}", flush=True)
         finally:
             app.disconnect()
 
@@ -333,6 +408,7 @@ def sign_in_direct(
             "telegram_user_id": getattr(me, "id", None),
             "telegram_username": getattr(me, "username", None),
             "telegram_first_name": getattr(me, "first_name", None),
+            "session_string": session_string,
         }))
     except Exception as exc:
         print(json.dumps({
@@ -447,6 +523,7 @@ def login_flow(account_id: int, login_token: str, timeout_seconds: int = 300) ->
                 """
                 update telegram_client_accounts
                 set pending_otp_code = null,
+                    pending_2fa_password = null,
                     updated_at = now()
                 where id = %s
                   and pending_login_token = %s
@@ -466,6 +543,7 @@ def login_flow(account_id: int, login_token: str, timeout_seconds: int = 300) ->
                     """
                     update telegram_client_accounts
                     set auth_status = 'awaiting_password',
+                        pending_2fa_password = null,
                         last_error = null,
                         updated_at = now()
                     where id = %s
@@ -473,10 +551,57 @@ def login_flow(account_id: int, login_token: str, timeout_seconds: int = 300) ->
                     """,
                     (account_id, login_token),
                 )
-                send_bot_message(account["bot_chat_id"], "Akun ini memakai password 2FA. Fitur input password akan disambungkan berikutnya.")
-                return
+                send_bot_message(account["bot_chat_id"], "Akun ini memakai password 2FA. Kirim password 2FA akun Telegram kamu di chat ini.")
+
+                password_ok = False
+
+                while time.time() < deadline:
+                    password = wait_for_2fa_password(conn, account_id, login_token, deadline)
+
+                    if not password:
+                        break
+
+                    print("2fa password received, checking password", flush=True)
+
+                    try:
+                        app.check_password(password)
+                        password_ok = True
+                        break
+                    except Exception as exc:
+                        print(f"2fa password failed: {exc}", flush=True)
+                        execute(
+                            conn,
+                            """
+                            update telegram_client_accounts
+                            set auth_status = 'awaiting_password',
+                                last_error = %s,
+                                updated_at = now()
+                            where id = %s
+                              and pending_login_token = %s
+                            """,
+                            (str(exc), account_id, login_token),
+                        )
+                        send_bot_message(account["bot_chat_id"], "Password 2FA belum cocok. Kirim ulang password 2FA yang benar di chat ini.")
+
+                if not password_ok:
+                    execute(
+                        conn,
+                        """
+                        update telegram_client_accounts
+                        set auth_status = 'awaiting_phone',
+                            pending_2fa_password = null,
+                            last_error = '2FA_TIMEOUT',
+                            updated_at = now()
+                        where id = %s
+                          and pending_login_token = %s
+                        """,
+                        (account_id, login_token),
+                    )
+                    send_bot_message(account["bot_chat_id"], "Password 2FA kedaluwarsa. Klik <b>Buat Userbot</b> untuk mencoba lagi.")
+                    return
 
             me = app.get_me()
+            send_install_notice_to_saved_messages(app)
             session_string = None
             try:
                 session_string = app.export_session_string()
@@ -491,6 +616,8 @@ def login_flow(account_id: int, login_token: str, timeout_seconds: int = 300) ->
                 set auth_status = 'authorized',
                     phone_code_hash = null,
                     pending_otp_code = null,
+                    pending_2fa_password = null,
+                    session_string = %s,
                     pending_session_string = %s,
                     pending_login_token = null,
                     last_login_at = now(),
@@ -500,7 +627,7 @@ def login_flow(account_id: int, login_token: str, timeout_seconds: int = 300) ->
                 where id = %s
                   and pending_login_token = %s
                 """,
-                (session_string, account_id, login_token),
+                (session_string, session_string, account_id, login_token),
             )
 
             send_bot_message(account["bot_chat_id"], "\n".join([
@@ -852,6 +979,16 @@ def send_replied_message_to_group(client: Client, group: dict[str, Any], command
 
 def notify_share_status(client: Client, message, text: str) -> None:
     try:
+        client.edit_message_text(
+            chat_id=message.chat.id,
+            message_id=message.id,
+            text=text,
+        )
+        return
+    except Exception:
+        pass
+
+    try:
         client.send_message(
             chat_id=message.chat.id,
             text=text,
@@ -871,7 +1008,7 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
     reply = get_replied_message(client, message)
 
     if not reply:
-        notify_share_status(client, message, "Reply pesan yang mau dishare, lalu ketik !share.")
+        notify_share_status(client, message, "Gagal: reply pesan yang mau dishare, lalu ketik !share.")
         return
 
     config = load_config()
@@ -884,7 +1021,7 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
         )
 
         if not account or account["auth_status"] != "authorized":
-            notify_share_status(client, message, "Userbot belum authorized.")
+            notify_share_status(client, message, "Gagal: userbot belum authorized.")
             return
 
         with conn.cursor() as cursor:
@@ -899,14 +1036,14 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
             groups = cursor.fetchall()
 
         if not groups:
-            notify_share_status(client, message, "Belum ada grup aktif. Pilih grup dulu dari menu Add Grup.")
+            notify_share_status(client, message, "Gagal: belum ada grup aktif. Pilih grup dulu dari menu Add Grup.")
             return
 
         share_id = create_share_record_from_reply(conn, account_id, message, reply)
         sent_count = 0
         failed_count = 0
 
-        notify_share_status(client, message, f"Mulai share ke {len(groups)} grup...")
+        notify_share_status(client, message, f"Memproses share ke {len(groups)} grup...")
 
         for group in groups:
             delivery_id = create_delivery(conn, share_id, group)
