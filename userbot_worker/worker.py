@@ -1239,28 +1239,31 @@ def send_replied_message_to_group(client: Client, group: dict[str, Any], command
             raise RuntimeError(f"copy failed: {copy_exc}; text fallback failed: {send_exc}") from send_exc
 
 
-def notify_share_status(client: Client, message, text: str) -> None:
-    try:
-        client.edit_message_text(
-            chat_id=message.chat.id,
-            message_id=message.id,
-            text=text,
-        )
-        return
-    except Exception:
-        pass
+def notify_share_status(client: Client, message, text: str, status_message=None):
+    target_message = status_message or message
 
     try:
-        client.send_message(
+        edited = client.edit_message_text(
+            chat_id=target_message.chat.id,
+            message_id=target_message.id,
+            text=text,
+        )
+        return edited or target_message
+    except Exception:
+        if status_message is not None:
+            return status_message
+
+    try:
+        return client.send_message(
             chat_id=message.chat.id,
             text=text,
             reply_to_message_id=message.id,
         )
     except Exception:
         try:
-            client.send_message(message.chat.id, text)
+            return client.send_message(message.chat.id, text)
         except Exception:
-            pass
+            return None
 
 
 def handle_ping_command(client: Client, message, account_id: int) -> None:
@@ -1334,7 +1337,7 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
         failed_count = 0
         failed_errors = []
 
-        notify_share_status(
+        status_message = notify_share_status(
             client,
             message,
             f"Memproses share ke {len(groups)} grup...\nBerhasil: 0. Gagal: 0.",
@@ -1387,7 +1390,7 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
                     """,
                     (group["id"],),
                 )
-                notify_share_status(
+                status_message = notify_share_status(
                     client,
                     message,
                     "\n".join([
@@ -1397,6 +1400,7 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
                         "",
                         user_friendly_delivery_error(error_text),
                     ]),
+                    status_message,
                 )
 
             if delay_seconds > 0 and index < len(groups):
@@ -1416,7 +1420,7 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
     if failed_errors:
         result_text += "\n\nGagal pertama:\n" + short_error(failed_errors[0])
 
-    notify_share_status(client, message, result_text)
+    notify_share_status(client, message, result_text, status_message)
 
 
 def handle_userbot_command(client: Client, message, account_id: int, delay_seconds: float) -> None:
