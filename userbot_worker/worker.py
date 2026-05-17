@@ -732,13 +732,8 @@ def process_pending(limit: int, delay_seconds: float) -> None:
         process_share(int(share["id"]), delay_seconds)
 
 
-def create_share_record_from_reply(conn, account_id: int, message) -> int:
-    reply = message.reply_to_message
-    message_text = (
-        getattr(reply, "text", None)
-        or getattr(reply, "caption", None)
-        or "[copied telegram message]"
-    )
+def create_share_record_from_reply(conn, account_id: int, message, reply) -> int:
+    message_text = reply_text_for_share(reply)
 
     execute(
         conn,
@@ -786,6 +781,75 @@ def command_text(message) -> str:
     return (getattr(message, "text", None) or getattr(message, "caption", None) or "").strip()
 
 
+def is_share_command(message) -> bool:
+    text = command_text(message).lower()
+
+    return text == "!share" or text.startswith("!share ")
+
+
+def reply_text_for_share(reply) -> str:
+    return (
+        getattr(reply, "text", None)
+        or getattr(reply, "caption", None)
+        or "[copied telegram message]"
+    )
+
+
+def is_self_command_message(message) -> bool:
+    if not is_share_command(message):
+        return False
+
+    if getattr(message, "outgoing", False):
+        return True
+
+    from_user = getattr(message, "from_user", None)
+
+    return bool(getattr(from_user, "is_self", False))
+
+
+def self_share_command_filter(_, __, message) -> bool:
+    return is_self_command_message(message)
+
+
+def get_replied_message(client: Client, message):
+    reply = getattr(message, "reply_to_message", None)
+
+    if reply:
+        return reply
+
+    reply_id = getattr(message, "reply_to_message_id", None)
+
+    if not reply_id:
+        return None
+
+    return client.get_messages(chat_id=message.chat.id, message_ids=reply_id)
+
+
+def send_replied_message_to_group(client: Client, group: dict[str, Any], command_message, reply):
+    target = target_for_group(group)
+
+    try:
+        return client.copy_message(
+            chat_id=target,
+            from_chat_id=command_message.chat.id,
+            message_id=reply.id,
+        )
+    except Exception as copy_exc:
+        fallback_text = (
+            getattr(reply, "text", None)
+            or getattr(reply, "caption", None)
+            or ""
+        ).strip()
+
+        if fallback_text == "":
+            raise copy_exc
+
+        try:
+            return client.send_message(chat_id=target, text=fallback_text)
+        except Exception as send_exc:
+            raise RuntimeError(f"copy failed: {copy_exc}; text fallback failed: {send_exc}") from send_exc
+
+
 def notify_share_status(client: Client, message, text: str) -> None:
     try:
         client.send_message(
@@ -801,10 +865,12 @@ def notify_share_status(client: Client, message, text: str) -> None:
 
 
 def handle_share_command(client: Client, message, account_id: int, delay_seconds: float) -> None:
-    if command_text(message).lower() != "!share":
+    if not is_share_command(message):
         return
 
-    if not getattr(message, "reply_to_message", None):
+    reply = get_replied_message(client, message)
+
+    if not reply:
         notify_share_status(client, message, "Reply pesan yang mau dishare, lalu ketik !share.")
         return
 
@@ -836,7 +902,7 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
             notify_share_status(client, message, "Belum ada grup aktif. Pilih grup dulu dari menu Add Grup.")
             return
 
-        share_id = create_share_record_from_reply(conn, account_id, message)
+        share_id = create_share_record_from_reply(conn, account_id, message, reply)
         sent_count = 0
         failed_count = 0
 
@@ -846,11 +912,7 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
             delivery_id = create_delivery(conn, share_id, group)
 
             try:
-                copied = client.copy_message(
-                    chat_id=target_for_group(group),
-                    from_chat_id=message.chat.id,
-                    message_id=message.reply_to_message.id,
-                )
+                copied = send_replied_message_to_group(client, group, message, reply)
                 sent_count += 1
                 execute(
                     conn,
@@ -938,7 +1000,7 @@ def watch_shares(delay_seconds: float = 5.0, refresh_seconds: int = 30) -> None:
                         account_id,
                         delay_seconds,
                     ),
-                    filters.me & filters.text,
+                    filters.create(self_share_command_filter),
                 ))
                 client.start()
                 clients[account_id] = client
