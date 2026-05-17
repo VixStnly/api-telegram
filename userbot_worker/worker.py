@@ -583,9 +583,9 @@ def login_flow(account_id: int, login_token: str, timeout_seconds: int = 300) ->
                         )
                         send_bot_message(account["bot_chat_id"], "Password 2FA belum cocok. Kirim ulang password 2FA yang benar di chat ini.")
 
-            if not password_ok:
-                execute(
-                    conn,
+                if not password_ok:
+                    execute(
+                        conn,
                         """
                         update telegram_client_accounts
                         set auth_status = 'awaiting_phone',
