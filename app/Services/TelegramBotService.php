@@ -23,6 +23,15 @@ class TelegramBotService
         ], $extra));
     }
 
+    public function editMessageText($chatId, $messageId, $text, array $extra = [])
+    {
+        return $this->post('editMessageText', array_merge([
+            'chat_id' => $chatId,
+            'message_id' => $messageId,
+            'text' => $text,
+        ], $extra));
+    }
+
     public function answerCallbackQuery(string $callbackQueryId, ?string $text = null, array $extra = [])
     {
         $payload = ['callback_query_id' => $callbackQueryId];

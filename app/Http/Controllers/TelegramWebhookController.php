@@ -251,6 +251,7 @@ class TelegramWebhookController extends Controller
         $chat = $message['chat'] ?? [];
         $from = $callbackQuery['from'] ?? [];
         $chatId = (string) ($chat['id'] ?? '');
+        $messageId = $message['message_id'] ?? null;
 
         if ($callbackId !== '') {
             $telegram->answerCallbackQuery($callbackId);
@@ -329,7 +330,7 @@ class TelegramWebhookController extends Controller
                 return;
             }
 
-            $this->sendUserbotGroupPicker($telegram, $pyrogram, $chatId, $account);
+            $this->sendUserbotGroupPicker($telegram, $pyrogram, $chatId, $account, $messageId);
 
             return;
         }
@@ -360,7 +361,7 @@ class TelegramWebhookController extends Controller
                 ]);
             }
 
-            $this->sendUserbotGroupPicker($telegram, $pyrogram, $chatId, $account->fresh());
+            $this->sendUserbotGroupPicker($telegram, $pyrogram, $chatId, $account->fresh(), $messageId, refreshGroups: false);
 
             return;
         }
@@ -424,33 +425,48 @@ class TelegramWebhookController extends Controller
         TelegramBotService $telegram,
         PyrogramWorkerService $pyrogram,
         string $chatId,
-        TelegramClientAccount $account
+        TelegramClientAccount $account,
+        $messageId = null,
+        bool $refreshGroups = true
     ): void {
-        $telegram->sendMessage($chatId, '<b>Mengambil daftar grup dari akun userbot...</b>', [
+        $this->sendOrEditBotMessage($telegram, $chatId, $messageId, '<b>Mengambil daftar grup dari akun userbot...</b>', [
             'parse_mode' => 'HTML',
         ]);
 
-        $result = $pyrogram->listGroups($account);
-        $groups = $result['data']['groups'] ?? [];
+        $hasFreshGroups = TelegramClientGroup::where('telegram_client_account_id', $account->id)
+            ->whereNotNull('chat_id')
+            ->where('last_verified_at', '>=', now()->subMinutes(10))
+            ->exists();
 
-        if (! $result['ok'] || ! is_array($groups)) {
-            $telegram->sendMessage($chatId, implode("\n", [
-                '<b>Belum bisa mengambil grup.</b>',
-                '',
-                $this->formatWorkerErrorForTelegram($result, 'Alasan'),
-            ]), ['parse_mode' => 'HTML']);
+        $groups = [];
 
-            return;
-        }
+        if ($refreshGroups && ! $hasFreshGroups) {
+            $result = $pyrogram->listGroups($account);
+            $groups = $result['data']['groups'] ?? [];
 
-        foreach ($groups as $group) {
-            $this->syncClientGroup($account, $group);
+            if (! $result['ok'] || ! is_array($groups)) {
+                $this->sendOrEditBotMessage($telegram, $chatId, $messageId, implode("\n", [
+                    '<b>Belum bisa mengambil grup.</b>',
+                    '',
+                    $this->formatWorkerErrorForTelegram($result, 'Alasan'),
+                ]), ['parse_mode' => 'HTML']);
+
+                return;
+            }
+
+            foreach ($groups as $group) {
+                $this->syncClientGroup($account, $group);
+            }
         }
 
         $account = $account->fresh();
 
-        if (count($groups) === 0) {
-            $telegram->sendMessage($chatId, implode("\n", [
+        $storedGroupsCount = TelegramClientGroup::where('telegram_client_account_id', $account->id)
+            ->whereNotNull('chat_id')
+            ->count();
+
+        if ($storedGroupsCount === 0) {
+            $this->sendOrEditBotMessage($telegram, $chatId, $messageId, implode("\n", [
                 '<b>Belum ada grup yang terbaca.</b>',
                 '',
                 'Pastikan akun userbot sudah join ke grup target promosi.',
@@ -462,7 +478,7 @@ class TelegramWebhookController extends Controller
             return;
         }
 
-        $telegram->sendMessage($chatId, implode("\n", [
+        $this->sendOrEditBotMessage($telegram, $chatId, $messageId, implode("\n", [
             '<b>Pilih grup target promosi.</b>',
             '',
             'Klik nama grup untuk masuk atau keluar dari list share.',
@@ -470,6 +486,24 @@ class TelegramWebhookController extends Controller
             'parse_mode' => 'HTML',
             'reply_markup' => $this->groupPickerKeyboard($account),
         ]);
+    }
+
+    protected function sendOrEditBotMessage(
+        TelegramBotService $telegram,
+        string $chatId,
+        $messageId,
+        string $text,
+        array $extra = []
+    ): void {
+        if ($messageId) {
+            $result = $telegram->editMessageText($chatId, $messageId, $text, $extra);
+
+            if ($result['ok'] ?? false) {
+                return;
+            }
+        }
+
+        $telegram->sendMessage($chatId, $text, $extra);
     }
 
     protected function syncClientGroup(TelegramClientAccount $account, array $group): TelegramClientGroup
