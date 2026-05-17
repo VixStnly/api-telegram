@@ -1465,6 +1465,26 @@ def has_session_material(account: dict[str, Any]) -> bool:
     return (SESSION_DIR / f"{session_name}.session").exists()
 
 
+def mark_account_missing_session(conn, account: dict[str, Any]) -> None:
+    execute(
+        conn,
+        """
+        update telegram_client_accounts
+        set auth_status = 'awaiting_phone',
+            phone_code_hash = null,
+            pending_otp_code = null,
+            pending_2fa_password = null,
+            pending_login_token = null,
+            last_error = 'SESSION_MISSING_RELOGIN_REQUIRED',
+            updated_at = now()
+        where id = %s
+          and auth_status = 'authorized'
+        """,
+        (account["id"],),
+    )
+    print(f"marked authorized account missing session account_id={account.get('id')}", flush=True)
+
+
 def watch_shares(delay_seconds: float = 5.0, refresh_seconds: int = 30) -> None:
     watcher_lock = acquire_watcher_lock()
 
@@ -1517,7 +1537,8 @@ def watch_shares(delay_seconds: float = 5.0, refresh_seconds: int = 30) -> None:
                     continue
 
                 if not has_session_material(account):
-                    print(f"skip authorized account without session material account_id={account_id}", flush=True)
+                    with db_connect(config) as conn:
+                        mark_account_missing_session(conn, account)
                     continue
 
                 try:

@@ -168,7 +168,7 @@ class TelegramWebhookController extends Controller
                 $account = TelegramClientAccount::where('bot_chat_id', $chatId)
                     ->where('auth_status', 'authorized')
                     ->latest()
-                    ->first();
+                    ->first() ?: $this->currentClientAccountForChat($chatId);
                 $logPath = storage_path('logs/userbot-share-watcher.log');
                 $log = is_file($logPath) ? file_get_contents($logPath) : 'Log watcher belum ada.';
                 $log = Str::limit(trim((string) $log), 2500);
