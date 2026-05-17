@@ -699,9 +699,14 @@ def login_flow(account_id: int, login_token: str, timeout_seconds: int = 300) ->
                 pass
 
 
-def target_for_group(group: dict[str, Any]) -> str:
+def target_for_group(group: dict[str, Any]) -> int | str:
     if group.get("chat_id"):
-        return group["chat_id"]
+        chat_id = str(group["chat_id"]).strip()
+
+        if chat_id.lstrip("-").isdigit():
+            return int(chat_id)
+
+        return chat_id
     if group.get("username"):
         return group["username"]
     if group.get("invite_link"):
