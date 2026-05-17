@@ -1103,6 +1103,37 @@ def send_replied_message_to_group(client: Client, group: dict[str, Any], command
     source = source_chat_for_copy(client, command_message)
     reply_text = (getattr(reply, "text", None) or "").strip()
 
+    try:
+        forwarded = client.forward_messages(
+            chat_id=target,
+            from_chat_id=source,
+            message_ids=reply.id,
+        )
+
+        if isinstance(forwarded, list):
+            return forwarded[0]
+
+        return forwarded
+    except Exception as forward_exc:
+        if is_peer_invalid_error(forward_exc):
+            target = warm_group_peer(client, group)
+
+            try:
+                forwarded = client.forward_messages(
+                    chat_id=target,
+                    from_chat_id=source,
+                    message_ids=reply.id,
+                )
+
+                if isinstance(forwarded, list):
+                    return forwarded[0]
+
+                return forwarded
+            except Exception as retry_forward_exc:
+                forward_exc = retry_forward_exc
+
+        print(f"forward failed, trying fallback: {forward_exc}", flush=True)
+
     if reply_text and not getattr(reply, "media", None):
         try:
             return client.send_message(chat_id=target, text=reply_text)
