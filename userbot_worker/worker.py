@@ -1033,6 +1033,29 @@ def short_error(text: str, limit: int = 450) -> str:
     return text[: limit - 3] + "..."
 
 
+def is_peer_invalid_error(exc: Exception) -> bool:
+    text = str(exc).upper()
+
+    return "PEER_ID_INVALID" in text or "PEER ID INVALID" in text or "PEER_ID" in text
+
+
+def warm_group_peer(client: Client, group: dict[str, Any]):
+    target = target_for_group(group)
+
+    if not isinstance(target, int):
+        return target
+
+    target_text = str(target)
+
+    for dialog in client.get_dialogs(limit=200):
+        chat = getattr(dialog, "chat", None)
+
+        if chat is not None and str(getattr(chat, "id", "")) == target_text:
+            return getattr(chat, "id")
+
+    return target
+
+
 def send_replied_message_to_group(client: Client, group: dict[str, Any], command_message, reply):
     target = target_for_group(group)
     source = source_chat_for_copy(client, command_message)
@@ -1044,6 +1067,18 @@ def send_replied_message_to_group(client: Client, group: dict[str, Any], command
             message_id=reply.id,
         )
     except Exception as copy_exc:
+        if is_peer_invalid_error(copy_exc):
+            target = warm_group_peer(client, group)
+
+            try:
+                return client.copy_message(
+                    chat_id=target,
+                    from_chat_id=source,
+                    message_id=reply.id,
+                )
+            except Exception as retry_exc:
+                copy_exc = retry_exc
+
         fallback_text = (
             getattr(reply, "text", None)
             or getattr(reply, "caption", None)
@@ -1056,6 +1091,14 @@ def send_replied_message_to_group(client: Client, group: dict[str, Any], command
         try:
             return client.send_message(chat_id=target, text=fallback_text)
         except Exception as send_exc:
+            if is_peer_invalid_error(send_exc):
+                target = warm_group_peer(client, group)
+
+                try:
+                    return client.send_message(chat_id=target, text=fallback_text)
+                except Exception as retry_send_exc:
+                    send_exc = retry_send_exc
+
             raise RuntimeError(f"copy failed: {copy_exc}; text fallback failed: {send_exc}") from send_exc
 
 
