@@ -1284,7 +1284,12 @@ def poll_saved_messages_for_share(
 
         processed_message_ids.add(message_id)
         print(f"!share command found by saved-messages poll account_id={account_id} message_id={message_id}", flush=True)
-        handle_share_command(client, message, account_id, delay_seconds)
+
+        try:
+            handle_share_command(client, message, account_id, delay_seconds)
+        except Exception as exc:
+            print(f"saved messages !share handling failed account_id={account_id} message_id={message_id}: {exc}", flush=True)
+            notify_share_status(client, message, f"Gagal memproses !share: {short_error(str(exc), 350)}")
 
 
 def mark_account_authorized_from_running_client(conn, account: dict[str, Any], client: Client) -> None:
@@ -1335,80 +1340,94 @@ def watch_shares(delay_seconds: float = 5.0, refresh_seconds: int = 30) -> None:
     config = load_config()
     clients: dict[int, Client] = {}
     saved_message_processed_ids: dict[int, set[int]] = {}
+    last_heartbeat_at = 0.0
 
     print("share watcher started", flush=True)
 
     while True:
-        with db_connect(config) as conn:
-            with conn.cursor() as cursor:
-                cursor.execute(
-                    """
-                    select * from telegram_client_accounts
-                    where is_active = 1
-                      and (
-                        auth_status = 'authorized'
-                        or session_string is not null
-                        or pending_session_string is not null
-                        or auth_status in ('sending_code', 'awaiting_code', 'awaiting_password')
-                      )
-                    order by id asc
-                    """
-                )
-                accounts = cursor.fetchall()
+        try:
+            now = time.time()
 
-        active_ids = {int(account["id"]) for account in accounts}
+            if now - last_heartbeat_at >= 60:
+                print(f"share watcher heartbeat active_clients={len(clients)}", flush=True)
+                last_heartbeat_at = now
 
-        for account_id, client in list(clients.items()):
-            if account_id not in active_ids:
-                print(f"stopping inactive userbot watcher account_id={account_id}", flush=True)
+            with db_connect(config) as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        select * from telegram_client_accounts
+                        where is_active = 1
+                          and (
+                            auth_status = 'authorized'
+                            or session_string is not null
+                            or pending_session_string is not null
+                            or auth_status in ('sending_code', 'awaiting_code', 'awaiting_password')
+                          )
+                        order by id asc
+                        """
+                    )
+                    accounts = cursor.fetchall()
+
+            active_ids = {int(account["id"]) for account in accounts}
+
+            for account_id, client in list(clients.items()):
+                if account_id not in active_ids:
+                    print(f"stopping inactive userbot watcher account_id={account_id}", flush=True)
+                    try:
+                        client.stop()
+                    except Exception as exc:
+                        print(f"watcher stop failed account_id={account_id}: {exc}", flush=True)
+                    clients.pop(account_id, None)
+                    saved_message_processed_ids.pop(account_id, None)
+
+            for account in accounts:
+                account_id = int(account["id"])
+
+                if account_id in clients:
+                    continue
+
                 try:
-                    client.stop()
+                    client = client_for(account, config)
+                    client.start()
+
+                    with db_connect(config) as conn:
+                        mark_account_authorized_from_running_client(conn, account, client)
+
+                    client.add_handler(MessageHandler(
+                        lambda client, message, account_id=account_id: handle_share_command(
+                            client,
+                            message,
+                            account_id,
+                            delay_seconds,
+                        ),
+                        filters.all,
+                    ))
+                    clients[account_id] = client
+                    saved_message_processed_ids.setdefault(account_id, set())
+                    print(f"watching userbot account_id={account_id} phone={account.get('phone_number')}", flush=True)
                 except Exception as exc:
-                    print(f"watcher stop failed account_id={account_id}: {exc}", flush=True)
-                clients.pop(account_id, None)
-                saved_message_processed_ids.pop(account_id, None)
+                    print(f"watcher start failed account_id={account_id}: {exc}", flush=True)
+                    if is_auth_key_error(exc):
+                        try:
+                            with db_connect(config) as conn:
+                                mark_account_session_error(conn, account, exc)
+                        except Exception as notify_exc:
+                            print(f"watcher session error notify failed account_id={account_id}: {notify_exc}", flush=True)
 
-        for account in accounts:
-            account_id = int(account["id"])
-
-            if account_id in clients:
-                continue
-
-            try:
-                client = client_for(account, config)
-                client.start()
-
-                with db_connect(config) as conn:
-                    mark_account_authorized_from_running_client(conn, account, client)
-
-                client.add_handler(MessageHandler(
-                    lambda client, message, account_id=account_id: handle_share_command(
+            for account_id, client in list(clients.items()):
+                try:
+                    poll_saved_messages_for_share(
                         client,
-                        message,
                         account_id,
                         delay_seconds,
-                    ),
-                    filters.all,
-                ))
-                clients[account_id] = client
-                saved_message_processed_ids.setdefault(account_id, set())
-                print(f"watching userbot account_id={account_id} phone={account.get('phone_number')}", flush=True)
-            except Exception as exc:
-                print(f"watcher start failed account_id={account_id}: {exc}", flush=True)
-                if is_auth_key_error(exc):
-                    try:
-                        with db_connect(config) as conn:
-                            mark_account_session_error(conn, account, exc)
-                    except Exception as notify_exc:
-                        print(f"watcher session error notify failed account_id={account_id}: {notify_exc}", flush=True)
+                        saved_message_processed_ids.setdefault(account_id, set()),
+                    )
+                except Exception as exc:
+                    print(f"watcher poll failed account_id={account_id}: {exc}", flush=True)
 
-        for account_id, client in list(clients.items()):
-            poll_saved_messages_for_share(
-                client,
-                account_id,
-                delay_seconds,
-                saved_message_processed_ids.setdefault(account_id, set()),
-            )
+        except Exception as exc:
+            print(f"share watcher loop failed: {exc}", flush=True)
 
         time.sleep(max(1, min(refresh_seconds, 5)))
 
