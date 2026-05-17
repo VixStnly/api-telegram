@@ -767,13 +767,22 @@ def process_share(share_id: int, delay_seconds: float) -> None:
 
         sent_count = 0
         failed_count = 0
+        meta = share_meta(share)
 
         with client_for(account, config) as app:
             for group in groups:
                 delivery_id = create_delivery(conn, share_id, group)
 
                 try:
-                    message = app.send_message(target_for_group(group), share["message_text"])
+                    if meta.get("source_chat_id") and meta.get("reply_message_id"):
+                        message = forward_source_message_to_group(
+                            app,
+                            group,
+                            meta["source_chat_id"],
+                            int(meta["reply_message_id"]),
+                        )
+                    else:
+                        message = app.send_message(target_for_group(group), share["message_text"])
                     sent_count += 1
                     execute(
                         conn,
@@ -917,8 +926,9 @@ def process_pending(limit: int, delay_seconds: float) -> None:
         process_share(int(share["id"]), delay_seconds)
 
 
-def create_share_record_from_reply(conn, account_id: int, message, reply) -> int:
+def create_share_record_from_reply(conn, account_id: int, message, reply, client: Client | None = None) -> int:
     message_text = reply_text_for_share(reply)
+    source_chat_id = source_chat_for_copy(client, message)
 
     execute(
         conn,
@@ -935,7 +945,9 @@ def create_share_record_from_reply(conn, account_id: int, message, reply) -> int
                 "source": "userbot_reply_command",
                 "command_chat_id": str(message.chat.id),
                 "command_message_id": getattr(message, "id", None),
+                "source_chat_id": source_chat_id,
                 "reply_message_id": getattr(reply, "id", None),
+                "delivery_method": "forward",
             }),
         ),
     )
@@ -1034,6 +1046,9 @@ def source_chat_for_copy(client: Client, message):
     chat = getattr(message, "chat", None)
     chat_id = getattr(chat, "id", None)
 
+    if client is None:
+        return "me" if is_saved_messages_chat(message) else chat_id
+
     try:
         me = client.get_me()
 
@@ -1043,6 +1058,35 @@ def source_chat_for_copy(client: Client, message):
         pass
 
     return chat_id
+
+
+def is_saved_messages_chat(message) -> bool:
+    chat = getattr(message, "chat", None)
+    chat_type = str(getattr(chat, "type", "")).lower()
+
+    if chat_type not in ("chattype.private", "private"):
+        return False
+
+    from_user = getattr(message, "from_user", None)
+
+    return bool(getattr(from_user, "is_self", False) or getattr(message, "outgoing", False))
+
+
+def share_meta(share: dict[str, Any]) -> dict[str, Any]:
+    meta = share.get("meta")
+
+    if isinstance(meta, dict):
+        return meta
+
+    if not meta:
+        return {}
+
+    try:
+        decoded = json.loads(meta)
+    except (TypeError, ValueError):
+        return {}
+
+    return decoded if isinstance(decoded, dict) else {}
 
 
 def short_error(text: str, limit: int = 450) -> str:
@@ -1098,16 +1142,14 @@ def warm_group_peer(client: Client, group: dict[str, Any]):
     return target
 
 
-def send_replied_message_to_group(client: Client, group: dict[str, Any], command_message, reply):
+def forward_source_message_to_group(client: Client, group: dict[str, Any], source_chat_id, message_id: int):
     target = target_for_group(group)
-    source = source_chat_for_copy(client, command_message)
-    reply_text = (getattr(reply, "text", None) or "").strip()
 
     try:
         forwarded = client.forward_messages(
             chat_id=target,
-            from_chat_id=source,
-            message_ids=reply.id,
+            from_chat_id=source_chat_id,
+            message_ids=message_id,
         )
 
         if isinstance(forwarded, list):
@@ -1121,8 +1163,8 @@ def send_replied_message_to_group(client: Client, group: dict[str, Any], command
             try:
                 forwarded = client.forward_messages(
                     chat_id=target,
-                    from_chat_id=source,
-                    message_ids=reply.id,
+                    from_chat_id=source_chat_id,
+                    message_ids=message_id,
                 )
 
                 if isinstance(forwarded, list):
@@ -1132,6 +1174,17 @@ def send_replied_message_to_group(client: Client, group: dict[str, Any], command
             except Exception as retry_forward_exc:
                 forward_exc = retry_forward_exc
 
+        raise forward_exc
+
+
+def send_replied_message_to_group(client: Client, group: dict[str, Any], command_message, reply):
+    target = target_for_group(group)
+    source = source_chat_for_copy(client, command_message)
+    reply_text = (getattr(reply, "text", None) or "").strip()
+
+    try:
+        return forward_source_message_to_group(client, group, source, reply.id)
+    except Exception as forward_exc:
         print(f"forward failed, trying fallback: {forward_exc}", flush=True)
 
     if reply_text and not getattr(reply, "media", None):
@@ -1276,7 +1329,7 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
             notify_share_status(client, message, "Gagal: belum ada grup aktif. Pilih grup dulu dari menu Add Grup.")
             return
 
-        share_id = create_share_record_from_reply(conn, account_id, message, reply)
+        share_id = create_share_record_from_reply(conn, account_id, message, reply, client)
         sent_count = 0
         failed_count = 0
         failed_errors = []
