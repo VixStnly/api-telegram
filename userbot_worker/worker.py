@@ -1080,6 +1080,21 @@ def warm_group_peer(client: Client, group: dict[str, Any]):
 def send_replied_message_to_group(client: Client, group: dict[str, Any], command_message, reply):
     target = target_for_group(group)
     source = source_chat_for_copy(client, command_message)
+    reply_text = (getattr(reply, "text", None) or "").strip()
+
+    if reply_text and not getattr(reply, "media", None):
+        try:
+            return client.send_message(chat_id=target, text=reply_text)
+        except Exception as send_exc:
+            if is_peer_invalid_error(send_exc):
+                target = warm_group_peer(client, group)
+
+                try:
+                    return client.send_message(chat_id=target, text=reply_text)
+                except Exception as retry_send_exc:
+                    send_exc = retry_send_exc
+
+            raise send_exc
 
     try:
         return client.copy_message(
@@ -1100,11 +1115,7 @@ def send_replied_message_to_group(client: Client, group: dict[str, Any], command
             except Exception as retry_exc:
                 copy_exc = retry_exc
 
-        fallback_text = (
-            getattr(reply, "text", None)
-            or getattr(reply, "caption", None)
-            or ""
-        ).strip()
+        fallback_text = (reply_text or getattr(reply, "caption", None) or "").strip()
 
         if fallback_text == "":
             raise copy_exc
@@ -1261,20 +1272,14 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
 
         for index, group in enumerate(groups, start=1):
             group_name = group.get("title") or group.get("chat_id") or f"grup #{index}"
-            notify_share_status(
-                client,
-                message,
-                "\n".join([
-                    f"Memproses share ke {len(groups)} grup...",
-                    f"Sedang kirim {index}/{len(groups)}: {group_name}",
-                    f"Berhasil: {sent_count}. Gagal: {failed_count}.",
-                ]),
-            )
             delivery_id = create_delivery(conn, share_id, group)
+            started_at = time.monotonic()
 
             try:
                 copied = send_replied_message_to_group(client, group, message, reply)
                 sent_count += 1
+                duration = time.monotonic() - started_at
+                print(f"share delivery sent account_id={account_id} group={group_name} seconds={duration:.2f}", flush=True)
                 execute(
                     conn,
                     """
@@ -1287,18 +1292,11 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
                     """,
                     (str(copied.id), delivery_id),
                 )
-                notify_share_status(
-                    client,
-                    message,
-                    "\n".join([
-                        f"Memproses share ke {len(groups)} grup...",
-                        f"Selesai {index}/{len(groups)}: {group_name}",
-                        f"Berhasil: {sent_count}. Gagal: {failed_count}.",
-                    ]),
-                )
             except Exception as exc:
                 failed_count += 1
+                duration = time.monotonic() - started_at
                 error_text = str(exc)
+                print(f"share delivery failed account_id={account_id} group={group_name} seconds={duration:.2f} error={error_text}", flush=True)
                 failed_errors.append(f"{group.get('title') or group.get('chat_id')}: {error_text}")
                 execute(
                     conn,
@@ -1341,6 +1339,9 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
         update_share_totals(conn, share_id, len(groups), sent_count, failed_count, status)
 
     result_text = f"Share selesai. Berhasil: {sent_count}. Gagal: {failed_count}."
+
+    if sent_count:
+        result_text += "\nPesan berhasil dikirim ke grup target."
 
     if failed_errors:
         result_text += "\n\nError pertama:\n" + short_error(failed_errors[0])
