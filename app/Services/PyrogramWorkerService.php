@@ -94,7 +94,7 @@ class PyrogramWorkerService
             'nohup %s %s watch-shares --delay %s --refresh %s >> %s 2>&1 & echo $!',
             escapeshellarg($python),
             escapeshellarg($worker),
-            escapeshellarg((string) env('SHARE_DELAY', 5)),
+            escapeshellarg((string) env('SHARE_DELAY', 0)),
             escapeshellarg((string) env('SHARE_REFRESH', 5)),
             escapeshellarg($log)
         );

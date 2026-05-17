@@ -19,7 +19,7 @@ if [ -x userbot_worker/.venv/bin/python ]; then
     (
         while true; do
             echo "[$(date -Is)] Starting Pyrogram !share watcher..."
-            userbot_worker/.venv/bin/python userbot_worker/worker.py watch-shares --delay "${SHARE_DELAY:-5}" --refresh "${SHARE_REFRESH:-5}"
+            userbot_worker/.venv/bin/python userbot_worker/worker.py watch-shares --delay "${SHARE_DELAY:-0}" --refresh "${SHARE_REFRESH:-5}"
             code="$?"
             echo "[$(date -Is)] Pyrogram !share watcher stopped with exit code ${code}; restarting in 5 seconds..."
             sleep 5

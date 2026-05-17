@@ -1311,6 +1311,14 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
                     """,
                     (error_text, delivery_id),
                 )
+                execute(
+                    conn,
+                    """
+                    delete from telegram_client_groups
+                    where id = %s
+                    """,
+                    (group["id"],),
+                )
                 notify_share_status(
                     client,
                     message,
@@ -1323,7 +1331,7 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
                     ]),
                 )
 
-            if delay_seconds > 0:
+            if delay_seconds > 0 and index < len(groups):
                 time.sleep(delay_seconds)
 
         status = "sent" if failed_count == 0 else "partial"
@@ -1378,7 +1386,35 @@ def handle_userbot_command_once(
 
         processed_message_keys.add(message_key)
 
-    handle_userbot_command(client, message, account_id, delay_seconds)
+    try:
+        handle_userbot_command(client, message, account_id, delay_seconds)
+    except Exception as exc:
+        print(f"userbot command handling failed account_id={account_id} key={message_key}: {exc}", flush=True)
+        notify_share_status(client, message, f"Gagal memproses command: {short_error(str(exc), 350)}")
+
+
+def seed_saved_message_commands(client: Client, account_id: int, processed_message_keys: set[str]) -> None:
+    try:
+        messages = list(client.get_chat_history("me", limit=50))
+    except Exception as exc:
+        print(f"saved messages seed failed account_id={account_id}: {exc}", flush=True)
+        return
+
+    seeded = 0
+
+    for message in messages:
+        if not is_userbot_command(message):
+            continue
+
+        message_key = message_process_key(message)
+
+        if message_key is None:
+            continue
+
+        processed_message_keys.add(message_key)
+        seeded += 1
+
+    print(f"seeded saved-message commands account_id={account_id} total={seeded}", flush=True)
 
 
 def poll_saved_messages_for_commands(
@@ -1502,7 +1538,7 @@ def mark_account_missing_session(conn, account: dict[str, Any]) -> None:
     print(f"deleted authorized account missing session account_id={account.get('id')}", flush=True)
 
 
-def watch_shares(delay_seconds: float = 5.0, refresh_seconds: int = 30) -> None:
+def watch_shares(delay_seconds: float = 0.0, refresh_seconds: int = 5) -> None:
     watcher_lock = acquire_watcher_lock()
 
     if watcher_lock is None:
@@ -1562,6 +1598,7 @@ def watch_shares(delay_seconds: float = 5.0, refresh_seconds: int = 30) -> None:
                     client = client_for(account, config)
                     client.start()
                     processed_message_keys = processed_message_keys_by_account.setdefault(account_id, set())
+                    seed_saved_message_commands(client, account_id, processed_message_keys)
 
                     with db_connect(config) as conn:
                         mark_account_authorized_from_running_client(conn, account, client)
@@ -1634,18 +1671,18 @@ def main() -> None:
 
     share_parser = subparsers.add_parser("share")
     share_parser.add_argument("share_id", type=int)
-    share_parser.add_argument("--delay", type=float, default=5.0)
+    share_parser.add_argument("--delay", type=float, default=0.0)
 
     pending_parser = subparsers.add_parser("share-pending")
     pending_parser.add_argument("--limit", type=int, default=5)
-    pending_parser.add_argument("--delay", type=float, default=5.0)
+    pending_parser.add_argument("--delay", type=float, default=0.0)
 
     list_groups_parser = subparsers.add_parser("list-groups")
     list_groups_parser.add_argument("account_id", type=int)
 
     watch_shares_parser = subparsers.add_parser("watch-shares")
-    watch_shares_parser.add_argument("--delay", type=float, default=5.0)
-    watch_shares_parser.add_argument("--refresh", type=int, default=30)
+    watch_shares_parser.add_argument("--delay", type=float, default=0.0)
+    watch_shares_parser.add_argument("--refresh", type=int, default=5)
 
     args = parser.parse_args()
 

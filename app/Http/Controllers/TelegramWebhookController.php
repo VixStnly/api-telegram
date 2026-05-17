@@ -170,8 +170,7 @@ class TelegramWebhookController extends Controller
                     ->latest()
                     ->first() ?: $this->currentClientAccountForChat($chatId);
                 $logPath = storage_path('logs/userbot-share-watcher.log');
-                $log = is_file($logPath) ? file_get_contents($logPath) : 'Log watcher belum ada.';
-                $log = Str::limit(trim((string) $log), 2500);
+                $log = $this->tailLog($logPath);
                 $sessionFile = $account ? storage_path('app/telegram-sessions/'.$account->session_name.'.session') : null;
                 $sessionFileExists = $sessionFile && is_file($sessionFile);
                 $needsRelogin = $account
@@ -1107,6 +1106,18 @@ class TelegramWebhookController extends Controller
         $error = Str::limit($error, 350);
 
         return $label.': <code>'.e($error).'</code>';
+    }
+
+    protected function tailLog(string $path, int $maxLines = 80, int $maxChars = 3000): string
+    {
+        if (! is_file($path)) {
+            return 'Log belum ada.';
+        }
+
+        $lines = file($path, FILE_IGNORE_NEW_LINES) ?: [];
+        $tail = implode("\n", array_slice($lines, -$maxLines));
+
+        return Str::limit(trim($tail), $maxChars);
     }
 
     protected function requestPhoneMessage(): string
