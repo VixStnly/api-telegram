@@ -320,7 +320,11 @@ class TelegramWebhookController extends Controller
                 ->get();
 
             if ($accounts->isEmpty()) {
-                $telegram->sendMessage($chatId, '<b>Belum ada userbot.</b>', [
+                $telegram->sendMessage($chatId, implode("\n", [
+                    '<b>🤖 Belum ada userbot aktif.</b>',
+                    '',
+                    $this->quote('Klik 🚀 Buat Userbot untuk menghubungkan akun Telegram pertama kamu.'),
+                ]), [
                     'parse_mode' => 'HTML',
                     'reply_markup' => $this->welcomeKeyboard(),
                 ]);
@@ -328,7 +332,11 @@ class TelegramWebhookController extends Controller
                 return;
             }
 
-            $telegram->sendMessage($chatId, '<b>Pilih userbot yang ingin kamu setting.</b>', [
+            $telegram->sendMessage($chatId, implode("\n", [
+                '<b>⚙️ Pilih userbot</b>',
+                '',
+                $this->quote('Pilih akun yang mau kamu atur grup share-nya.'),
+            ]), [
                 'parse_mode' => 'HTML',
                 'reply_markup' => $this->userbotListKeyboard($accounts),
             ]);
@@ -340,7 +348,11 @@ class TelegramWebhookController extends Controller
             $account = $this->accountFromCallback($chatId, $data, 'userbot:settings:');
 
             if (! $account) {
-                $telegram->sendMessage($chatId, 'Userbot tidak valid atau bukan milik chat ini.');
+                $telegram->sendMessage($chatId, implode("\n", [
+                    '<b>⚠️ Userbot tidak ditemukan.</b>',
+                    '',
+                    $this->quote('Userbot tidak valid atau bukan milik chat ini.'),
+                ]), ['parse_mode' => 'HTML']);
 
                 return;
             }
@@ -357,7 +369,11 @@ class TelegramWebhookController extends Controller
             $account = $this->authorizedAccountFromCallback($chatId, $data, 'userbot:add_group:');
 
             if (! $account) {
-                $telegram->sendMessage($chatId, 'Userbot belum aktif atau bukan milik chat ini.');
+                $telegram->sendMessage($chatId, implode("\n", [
+                    '<b>⚠️ Userbot belum aktif.</b>',
+                    '',
+                    $this->quote('Pastikan userbot sudah login dan terhubung ke chat ini.'),
+                ]), ['parse_mode' => 'HTML']);
 
                 return;
             }
@@ -377,7 +393,11 @@ class TelegramWebhookController extends Controller
                 ->first();
 
             if (! $account || $chatIdToToggle === '') {
-                $telegram->sendMessage($chatId, 'Grup tidak valid atau userbot belum aktif.');
+                $telegram->sendMessage($chatId, implode("\n", [
+                    '<b>⚠️ Grup tidak valid.</b>',
+                    '',
+                    $this->quote('Coba buka ulang menu grup dari setting userbot.'),
+                ]), ['parse_mode' => 'HTML']);
 
                 return;
             }
@@ -400,11 +420,13 @@ class TelegramWebhookController extends Controller
 
         if ($data === 'bot:about') {
             $telegram->sendMessage($chatId, implode("\n", [
-                '<b>Tentang VixStore AutoShare</b>',
+                '<b>✨ Tentang VixStore AutoShare</b>',
                 '',
-                'Bot ini membantu pelanggan menghubungkan akun Telegram mereka sebagai userbot untuk share promosi ke grup yang mereka daftarkan sendiri.',
+                $this->quote('Kelola userbot Telegram untuk share promosi ke grup yang sudah kamu pilih sendiri.'),
                 '',
-                'Fitur login userbot sedang disambungkan bertahap.',
+                '🚀 Buat userbot',
+                '📌 Pilih grup target',
+                '⚡ Share pesan lebih cepat lewat forward',
             ]), ['parse_mode' => 'HTML']);
 
             return;
@@ -412,12 +434,14 @@ class TelegramWebhookController extends Controller
 
         if ($data === 'bot:rules') {
             $telegram->sendMessage($chatId, implode("\n", [
-                '<b>Rules Penggunaan</b>',
+                '<b>📜 Rules Penggunaan</b>',
                 '',
-                '1. Gunakan hanya untuk grup yang kamu ikuti dan izinkan promosi.',
-                '2. Jangan mengirim spam berlebihan.',
-                '3. Akun Telegram yang terkena limit menjadi tanggung jawab pemilik akun.',
-                '4. Gunakan jeda kirim agar akun tetap aman.',
+                $this->quote('Gunakan fitur share dengan rapi supaya akun tetap aman dan grup tetap nyaman.'),
+                '',
+                '1. ✅ Gunakan hanya untuk grup yang kamu ikuti.',
+                '2. 🚫 Jangan kirim spam berlebihan.',
+                '3. 🛡️ Pakai jeda kirim kalau target grup banyak.',
+                '4. 👤 Limit akun Telegram menjadi tanggung jawab pemilik akun.',
             ]), ['parse_mode' => 'HTML']);
         }
     }
@@ -461,7 +485,11 @@ class TelegramWebhookController extends Controller
         $messageId = null,
         bool $refreshGroups = true
     ): void {
-        $this->sendOrEditBotMessage($telegram, $chatId, $messageId, '<b>Mengambil daftar grup dari akun userbot...</b>', [
+        $this->sendOrEditBotMessage($telegram, $chatId, $messageId, implode("\n", [
+            '<b>🔎 Mengambil daftar grup...</b>',
+            '',
+            $this->quote('Sebentar ya, bot sedang membaca grup dari akun userbot kamu.'),
+        ]), [
             'parse_mode' => 'HTML',
         ]);
 
@@ -478,7 +506,9 @@ class TelegramWebhookController extends Controller
 
             if (! $result['ok'] || ! is_array($groups)) {
                 $this->sendOrEditBotMessage($telegram, $chatId, $messageId, implode("\n", [
-                    '<b>Belum bisa mengambil grup.</b>',
+                    '<b>⚠️ Belum bisa mengambil grup.</b>',
+                    '',
+                    $this->quote('Worker belum berhasil membaca daftar grup.'),
                     '',
                     $this->formatWorkerErrorForTelegram($result, 'Alasan'),
                 ]), ['parse_mode' => 'HTML']);
@@ -499,9 +529,9 @@ class TelegramWebhookController extends Controller
 
         if ($storedGroupsCount === 0) {
             $this->sendOrEditBotMessage($telegram, $chatId, $messageId, implode("\n", [
-                '<b>Belum ada grup yang terbaca.</b>',
+                '<b>📭 Belum ada grup yang terbaca.</b>',
                 '',
-                'Pastikan akun userbot sudah join ke grup target promosi.',
+                $this->quote('Pastikan akun userbot sudah join ke grup target promosi.'),
             ]), [
                 'parse_mode' => 'HTML',
                 'reply_markup' => $this->userbotSettingsKeyboard($account),
@@ -511,9 +541,9 @@ class TelegramWebhookController extends Controller
         }
 
         $this->sendOrEditBotMessage($telegram, $chatId, $messageId, implode("\n", [
-            '<b>Pilih grup target promosi.</b>',
+            '<b>📌 Pilih grup target promosi</b>',
             '',
-            'Klik nama grup untuk masuk atau keluar dari list share.',
+            $this->quote('Klik nama grup untuk masuk atau keluar dari list share. Grup bertanda ✅ akan menerima pesan.'),
         ]), [
             'parse_mode' => 'HTML',
             'reply_markup' => $this->groupPickerKeyboard($account),
@@ -566,7 +596,7 @@ class TelegramWebhookController extends Controller
         $rows = [];
 
         foreach ($accounts as $account) {
-            $label = trim(($account->phone_number ?? 'Userbot').' - '.$account->auth_status);
+            $label = '🤖 '.trim(($account->phone_number ?? 'Userbot').' • '.$account->auth_status);
 
             $rows[] = [[
                 'text' => Str::limit($label, 60, '...'),
@@ -575,7 +605,7 @@ class TelegramWebhookController extends Controller
         }
 
         $rows[] = [[
-            'text' => 'Buat Userbot Baru',
+            'text' => '🚀 Buat Userbot Baru',
             'callback_data' => 'userbot:create',
         ]];
 
@@ -589,18 +619,18 @@ class TelegramWebhookController extends Controller
             ->count();
 
         return implode("\n", [
-            '<b>Setting Userbot</b>',
+            '<b>⚙️ Setting Userbot</b>',
             '',
-            'Nomor: <code>'.e($account->phone_number ?? '-').'</code>',
-            'Status: <code>'.e($account->auth_status).'</code>',
-            'Grup aktif: <code>'.$activeGroups.'</code>',
+            '📱 Nomor: <code>'.e($account->phone_number ?? '-').'</code>',
+            '🟢 Status: <code>'.e($account->auth_status).'</code>',
+            '📌 Grup aktif: <code>'.$activeGroups.'</code>',
             $account->auth_status === 'error' && $account->last_error
-                ? 'Error: <code>'.e(Str::limit($account->last_error, 300)).'</code>'
+                ? '⚠️ Error: <code>'.e(Str::limit($account->last_error, 300)).'</code>'
                 : null,
             '',
             $account->auth_status === 'error'
-                ? 'Session userbot ini sudah tidak valid. Silakan buat userbot baru dan login ulang.'
-                : 'Pilih menu setting di bawah.',
+                ? $this->quote('Session userbot ini sudah tidak valid. Buat userbot baru lalu login ulang.')
+                : $this->quote('Pilih menu di bawah untuk mengatur target share.'),
         ]);
     }
 
@@ -610,21 +640,21 @@ class TelegramWebhookController extends Controller
 
         if ($account->auth_status === 'authorized') {
             $rows[] = [[
-                'text' => 'Add Grup',
+                'text' => '📌 Add Grup',
                 'callback_data' => 'userbot:add_group:'.$account->id,
             ]];
         }
 
         if ($account->auth_status === 'error') {
             $rows[] = [[
-                'text' => 'Buat Userbot Baru',
+                'text' => '🚀 Buat Userbot Baru',
                 'callback_data' => 'userbot:create',
             ]];
         }
 
         $rows[] = [
             [
-                'text' => 'Kembali ke List Bot',
+                'text' => '⬅️ Kembali ke List Bot',
                 'callback_data' => 'userbot:list',
             ],
         ];
@@ -645,7 +675,7 @@ class TelegramWebhookController extends Controller
         $rows = [];
 
         foreach ($groups as $group) {
-            $prefix = $group->status === 'active' ? '✅ ' : '';
+            $prefix = $group->status === 'active' ? '✅ ' : '▫️ ';
             $title = $group->title ?: $group->chat_id;
 
             $rows[] = [[
@@ -655,7 +685,7 @@ class TelegramWebhookController extends Controller
         }
 
         $rows[] = [[
-            'text' => 'Kembali ke Setting',
+            'text' => '⬅️ Kembali ke Setting',
             'callback_data' => 'userbot:settings:'.$account->id,
         ]];
 
@@ -715,9 +745,10 @@ class TelegramWebhookController extends Controller
 
         if (! $phoneNumber) {
             $telegram->sendMessage($account->bot_chat_id, implode("\n", [
-                '<b>Format nomor belum valid.</b>',
+                '<b>⚠️ Format nomor belum valid.</b>',
                 '',
-                'Kirim nomor Telegram dengan kode negara.',
+                $this->quote('Kirim nomor Telegram dengan kode negara.'),
+                '',
                 'Contoh: <code>+6281234567890</code>',
             ]), ['parse_mode' => 'HTML']);
 
@@ -735,10 +766,9 @@ class TelegramWebhookController extends Controller
 
             if (! $sameOwner) {
                 $telegram->sendMessage($account->bot_chat_id, implode("\n", [
-                    '<b>Nomor ini sudah terdaftar.</b>',
+                    '<b>⚠️ Nomor ini sudah terdaftar.</b>',
                     '',
-                    'Nomor tersebut sudah dipakai di akun userbot lain.',
-                    'Kalau ini nomor kamu, hubungi admin untuk reset data lama.',
+                    $this->quote('Nomor tersebut sudah dipakai di akun userbot lain. Kalau ini nomor kamu, hubungi admin untuk reset data lama.'),
                 ]), ['parse_mode' => 'HTML']);
 
                 $account->delete();
@@ -749,9 +779,9 @@ class TelegramWebhookController extends Controller
             if (! $sameChat) {
                 if ($account->phone_number !== null || $account->auth_status === 'authorized') {
                     $telegram->sendMessage($account->bot_chat_id, implode("\n", [
-                        '<b>Nomor ini sudah ada di data lama.</b>',
+                        '<b>ℹ️ Nomor ini sudah ada di data lama.</b>',
                         '',
-                        'Data saat ini belum bisa digabung otomatis. Hubungi admin untuk reset data lama nomor ini.',
+                        $this->quote('Data saat ini belum bisa digabung otomatis. Hubungi admin untuk reset data lama nomor ini.'),
                     ]), ['parse_mode' => 'HTML']);
 
                     return true;
@@ -788,10 +818,11 @@ class TelegramWebhookController extends Controller
         ]);
 
         $telegram->sendMessage($account->bot_chat_id, implode("\n", [
-            '<b>Nomor diterima.</b>',
+            '<b>✅ Nomor diterima.</b>',
             '',
-            "Nomor: <code>{$phoneNumber}</code>",
-            'Sebentar, sistem sedang meminta kode OTP Telegram...',
+            "📱 Nomor: <code>{$phoneNumber}</code>",
+            '',
+            $this->quote('Sebentar, sistem sedang meminta kode OTP Telegram.'),
         ]), ['parse_mode' => 'HTML']);
 
         $result = $pyrogram->startLoginFlow($account->fresh(), $loginToken);
@@ -803,9 +834,9 @@ class TelegramWebhookController extends Controller
 
             if (! $freshAccount) {
                 $telegram->sendMessage($account->bot_chat_id, implode("\n", [
-                    '<b>Login gagal.</b>',
+                    '<b>⚠️ Login gagal.</b>',
                     '',
-                    'Data percobaan login sudah dibersihkan. Klik <b>Buat Userbot</b> untuk mencoba ulang.',
+                    $this->quote('Data percobaan login sudah dibersihkan. Klik 🚀 Buat Userbot untuk mencoba ulang.'),
                 ]), ['parse_mode' => 'HTML']);
 
                 return true;
@@ -813,12 +844,12 @@ class TelegramWebhookController extends Controller
 
             if ($freshAccount && $freshAccount->last_error) {
                 $telegram->sendMessage($account->bot_chat_id, implode("\n", [
-                    '<b>Belum bisa meminta kode OTP.</b>',
+                    '<b>⚠️ Belum bisa meminta kode OTP.</b>',
                     '',
-                    'Worker Pyrogram berhenti sebelum Telegram mengirim kode.',
+                    $this->quote('Worker Pyrogram berhenti sebelum Telegram mengirim kode.'),
                     'Alasan: <code>'.e(Str::limit($freshAccount->last_error, 350)).'</code>',
                     '',
-                    'Klik <b>Buat Userbot</b> untuk mencoba ulang.',
+                    'Klik <b>🚀 Buat Userbot</b> untuk mencoba ulang.',
                 ]), ['parse_mode' => 'HTML']);
 
                 $freshAccount->delete();
@@ -828,10 +859,11 @@ class TelegramWebhookController extends Controller
 
             if ($freshAccount && $freshAccount->auth_status === 'awaiting_code') {
                 $telegram->sendMessage($account->bot_chat_id, implode("\n", [
-                    '<b>Kode OTP sudah diminta ke Telegram.</b>',
+                    '<b>📩 Kode OTP sudah diminta ke Telegram.</b>',
                     '',
-                    'Kalau kode belum muncul, tunggu sebentar lalu cek aplikasi Telegram akun tersebut.',
-                    'Masukkan OTP lewat tombol di bawah.',
+                    $this->quote('Kalau kode belum muncul, tunggu sebentar lalu cek aplikasi Telegram akun tersebut.'),
+                    '',
+                    '🔐 Masukkan OTP lewat tombol di bawah.',
                 ]), [
                     'parse_mode' => 'HTML',
                     'reply_markup' => $this->otpLinkKeyboard($freshAccount),
@@ -841,11 +873,11 @@ class TelegramWebhookController extends Controller
             }
 
             $telegram->sendMessage($account->bot_chat_id, implode("\n", [
-                '<b>Permintaan login sedang diproses.</b>',
+                '<b>⏳ Permintaan login sedang diproses.</b>',
                 '',
-                'Tunggu kode OTP dari Telegram. Setelah kode masuk, buka halaman input OTP lewat tombol di bawah.',
+                $this->quote('Tunggu kode OTP dari Telegram. Setelah kode masuk, buka halaman input OTP lewat tombol di bawah.'),
                 '',
-                'Jangan kirim kode OTP langsung di chat bot.',
+                '🚫 Jangan kirim kode OTP langsung di chat bot.',
             ]), [
                 'parse_mode' => 'HTML',
                 'reply_markup' => $this->otpLinkKeyboard($account->fresh()),
@@ -855,10 +887,11 @@ class TelegramWebhookController extends Controller
         }
 
         $telegram->sendMessage($account->bot_chat_id, implode("\n", [
-            '<b>Belum bisa mengirim OTP.</b>',
+            '<b>⚠️ Belum bisa mengirim OTP.</b>',
             '',
-            'Kemungkinan worker Pyrogram belum siap atau konfigurasi API ID/API HASH belum benar.',
+            $this->quote('Kemungkinan worker Pyrogram belum siap atau konfigurasi API ID/API HASH belum benar.'),
             $this->formatWorkerErrorForTelegram($result, 'Detail'),
+            '',
             'Coba lagi beberapa saat, atau hubungi admin.',
         ]), ['parse_mode' => 'HTML']);
 
@@ -897,16 +930,24 @@ class TelegramWebhookController extends Controller
         $code = preg_replace('/\D+/', '', $text);
 
         if (strlen($code) < 4) {
-            $telegram->sendMessage($account->bot_chat_id, 'Kode OTP belum valid. Kirim angka OTP dari Telegram.');
+            $telegram->sendMessage($account->bot_chat_id, implode("\n", [
+                '<b>⚠️ Kode OTP belum valid.</b>',
+                '',
+                $this->quote('Kirim angka OTP yang muncul dari Telegram.'),
+            ]), ['parse_mode' => 'HTML']);
 
             return true;
         }
 
-        $telegram->sendMessage($account->bot_chat_id, 'Kode diterima. Sedang mencoba login ke akun Telegram kamu...');
         $telegram->sendMessage($account->bot_chat_id, implode("\n", [
-            '<b>Jangan kirim OTP di chat.</b>',
+            '<b>✅ Kode diterima.</b>',
             '',
-            'Untuk menghindari blokir keamanan Telegram, masukkan kode OTP lewat halaman web yang aman.',
+            $this->quote('Sistem sedang mencoba login ke akun Telegram kamu.'),
+        ]), ['parse_mode' => 'HTML']);
+        $telegram->sendMessage($account->bot_chat_id, implode("\n", [
+            '<b>🔐 Jangan kirim OTP di chat.</b>',
+            '',
+            $this->quote('Untuk menghindari blokir keamanan Telegram, masukkan kode OTP lewat halaman web yang aman.'),
         ]), [
             'parse_mode' => 'HTML',
             'reply_markup' => $this->otpLinkKeyboard($account),
@@ -928,7 +969,11 @@ class TelegramWebhookController extends Controller
             'last_seen_at' => now(),
         ]);
 
-        $telegram->sendMessage($account->bot_chat_id, 'Password 2FA diterima. Sedang menyelesaikan login...');
+        $telegram->sendMessage($account->bot_chat_id, implode("\n", [
+            '<b>🔐 Password 2FA diterima.</b>',
+            '',
+            $this->quote('Sedang menyelesaikan login akun Telegram kamu.'),
+        ]), ['parse_mode' => 'HTML']);
 
         return true;
     }
@@ -1083,9 +1128,9 @@ class TelegramWebhookController extends Controller
     protected function wrongFlowMessage(): string
     {
         return implode("\n", [
-            '<b>Mulai dari menu dulu.</b>',
+            '<b>✨ Mulai dari menu dulu.</b>',
             '',
-            'Untuk membuat userbot, klik tombol <b>Buat Userbot</b> lalu ikuti instruksi nomor dan OTP dari bot ini.',
+            $this->quote('Untuk membuat userbot, klik tombol 🚀 Buat Userbot lalu ikuti instruksi nomor dan OTP dari bot ini.'),
         ]);
     }
 
@@ -1123,14 +1168,15 @@ class TelegramWebhookController extends Controller
     protected function requestPhoneMessage(): string
     {
         return implode("\n", [
-            '<b>Buat Userbot</b>',
+            '<b>🚀 Buat Userbot</b>',
             '',
-            'Kirim nomor Telegram yang ingin kamu hubungkan.',
+            $this->quote('Kirim nomor Telegram yang ingin kamu hubungkan.'),
             '',
-            'Format wajib pakai kode negara.',
+            '🌏 Format wajib pakai kode negara.',
             'Contoh: <code>+6281234567890</code>',
             '',
-            'Setelah itu Telegram akan mengirim kode OTP ke akun tersebut. Masukkan OTP lewat tombol web yang bot kirim, bukan lewat chat.',
+            '🔐 Setelah itu Telegram akan mengirim kode OTP ke akun tersebut.',
+            'Masukkan OTP lewat tombol web yang bot kirim, bukan lewat chat.',
         ]);
     }
 
@@ -1140,7 +1186,7 @@ class TelegramWebhookController extends Controller
             'inline_keyboard' => [
                 [
                     [
-                        'text' => 'Input OTP',
+                        'text' => '🔐 Input OTP',
                         'url' => $this->otpUrl($account),
                     ],
                 ],
@@ -1165,15 +1211,15 @@ class TelegramWebhookController extends Controller
     protected function welcomeMessage(): string
     {
         return implode("\n", [
-            '<b>Selamat datang di VixStore AutoShare.</b>',
+            '<b>✨ Selamat datang di VixStore AutoShare</b>',
             '',
-            'Tempat kamu mengelola userbot Telegram untuk bantu share promosi jualan ke grup-grup yang sudah kamu daftarkan.',
+            $this->quote('Kelola userbot Telegram untuk bantu share promosi jualan ke grup-grup yang sudah kamu daftarkan.'),
             '',
-            '<b>Apa yang bisa kamu lakukan di sini?</b>',
-            '• Membuat userbot dari akun Telegram kamu',
-            '• Menyimpan daftar grup target promosi',
-            '• Mengirim pesan promosi ke semua grup dengan command share',
-            '• Melihat status userbot dan aturan penggunaan',
+            '<b>Yang bisa kamu lakukan:</b>',
+            '🚀 Membuat userbot dari akun Telegram kamu',
+            '📌 Menyimpan daftar grup target promosi',
+            '⚡ Mengirim pesan promosi dengan command <code>!share</code>',
+            '🛡️ Melihat status userbot dan rules penggunaan',
             '',
             'Pilih menu di bawah untuk mulai.',
         ]);
@@ -1185,25 +1231,30 @@ class TelegramWebhookController extends Controller
             'inline_keyboard' => [
                 [
                     [
-                        'text' => 'Buat Userbot',
+                        'text' => '🚀 Buat Userbot',
                         'callback_data' => 'userbot:create',
                     ],
                     [
-                        'text' => 'List Bot',
+                        'text' => '🤖 List Bot',
                         'callback_data' => 'userbot:list',
                     ],
                 ],
                 [
                     [
-                        'text' => 'Tentang Bot',
+                        'text' => '✨ Tentang Bot',
                         'callback_data' => 'bot:about',
                     ],
                     [
-                        'text' => 'Rules',
+                        'text' => '📜 Rules',
                         'callback_data' => 'bot:rules',
                     ],
                 ],
             ],
         ];
+    }
+
+    protected function quote(string ...$lines): string
+    {
+        return '<blockquote>'.implode("\n", array_filter($lines, fn ($line) => $line !== '')).'</blockquote>';
     }
 }

@@ -128,15 +128,15 @@ def send_bot_message(chat_id: str, text: str) -> None:
 
 def installed_message() -> str:
     return "\n".join([
-        "Userbot berhasil dipasang.",
+        "✅ Userbot berhasil dipasang.",
         "",
-        "Untuk mulai share:",
+        "🚀 Untuk mulai share:",
         "1. Buka bot utama dari akun yang membuat userbot ini.",
-        "2. Pilih Add Grup, lalu ceklis grup target.",
+        "2. Pilih 📌 Add Grup, lalu ceklis grup target.",
         "3. Di akun userbot ini, reply pesan yang mau dibagikan.",
         "4. Ketik !share pada reply tersebut.",
         "",
-        "Pesan akan dikirim ke grup yang sudah diceklis.",
+        "⚡ Pesan akan diforward ke grup yang sudah diceklis.",
     ])
 
 
@@ -174,11 +174,11 @@ def mark_account_session_error(conn, account: dict[str, Any], exc: Exception) ->
 
     if account.get("bot_chat_id"):
         send_bot_message(account["bot_chat_id"], "\n".join([
-            "<b>Userbot tidak bisa dipakai.</b>",
+            "<b>⚠️ Userbot tidak bisa dipakai.</b>",
             "",
-            "Session Telegram akun ini sudah tidak valid, jadi <code>!share</code> tidak bisa diproses dari akun userbot.",
+            "<blockquote>Session Telegram akun ini sudah tidak valid, jadi <code>!share</code> tidak bisa diproses dari akun userbot.</blockquote>",
             "",
-            "Silakan klik <b>Buat Userbot Baru</b> lalu login ulang.",
+            "Silakan klik <b>🚀 Buat Userbot Baru</b> lalu login ulang.",
             "",
             f"Detail: <code>{error[:500]}</code>",
         ]))
@@ -518,11 +518,11 @@ def login_flow(account_id: int, login_token: str, timeout_seconds: int = 300) ->
             )
 
             send_bot_message(account["bot_chat_id"], "\n".join([
-                "<b>Kode OTP sudah dikirim oleh Telegram.</b>",
+                "<b>📩 Kode OTP sudah dikirim oleh Telegram.</b>",
                 "",
-                "Buka tombol <b>Input OTP</b> di pesan sebelumnya, lalu masukkan kode terbaru di halaman web.",
+                "<blockquote>Buka tombol <b>🔐 Input OTP</b> di pesan sebelumnya, lalu masukkan kode terbaru di halaman web.</blockquote>",
                 "",
-                "Jangan kirim kode OTP langsung di chat bot agar tidak diblokir sistem keamanan Telegram.",
+                "🚫 Jangan kirim kode OTP langsung di chat bot agar tidak diblokir sistem keamanan Telegram.",
             ]))
 
             deadline = time.time() + timeout_seconds
@@ -557,7 +557,7 @@ def login_flow(account_id: int, login_token: str, timeout_seconds: int = 300) ->
                     """,
                     (account_id, login_token),
                 )
-                send_bot_message(account["bot_chat_id"], "Kode OTP kedaluwarsa. Klik <b>Buat Userbot</b> untuk mencoba lagi.")
+                send_bot_message(account["bot_chat_id"], "⚠️ Kode OTP kedaluwarsa. Klik <b>🚀 Buat Userbot</b> untuk mencoba lagi.")
                 return
 
             print("otp code received, signing in", flush=True)
@@ -594,7 +594,11 @@ def login_flow(account_id: int, login_token: str, timeout_seconds: int = 300) ->
                     """,
                     (account_id, login_token),
                 )
-                send_bot_message(account["bot_chat_id"], "Akun ini memakai password 2FA. Kirim password 2FA akun Telegram kamu di chat ini.")
+                send_bot_message(account["bot_chat_id"], "\n".join([
+                    "<b>🔐 Akun memakai password 2FA.</b>",
+                    "",
+                    "<blockquote>Kirim password 2FA akun Telegram kamu di chat ini untuk menyelesaikan login.</blockquote>",
+                ]))
 
                 password_ok = False
 
@@ -624,7 +628,7 @@ def login_flow(account_id: int, login_token: str, timeout_seconds: int = 300) ->
                             """,
                             (str(exc), account_id, login_token),
                         )
-                        send_bot_message(account["bot_chat_id"], "Password 2FA belum cocok. Kirim ulang password 2FA yang benar di chat ini.")
+                        send_bot_message(account["bot_chat_id"], "⚠️ Password 2FA belum cocok. Kirim ulang password 2FA yang benar di chat ini.")
 
                 if not password_ok:
                     execute(
@@ -636,7 +640,7 @@ def login_flow(account_id: int, login_token: str, timeout_seconds: int = 300) ->
                         """,
                         (account_id, login_token),
                     )
-                    send_bot_message(account["bot_chat_id"], "Password 2FA kedaluwarsa. Klik <b>Buat Userbot</b> untuk mencoba lagi.")
+                    send_bot_message(account["bot_chat_id"], "⚠️ Password 2FA kedaluwarsa. Klik <b>🚀 Buat Userbot</b> untuk mencoba lagi.")
                     return
 
             me = app.get_me()
@@ -681,10 +685,10 @@ def login_flow(account_id: int, login_token: str, timeout_seconds: int = 300) ->
             send_install_notice_to_saved_messages(app)
 
             send_bot_message(account["bot_chat_id"], "\n".join([
-                "<b>Userbot berhasil dibuat.</b>",
+                "<b>✅ Userbot berhasil dibuat.</b>",
                 "",
                 f"Akun Telegram <code>{getattr(me, 'username', None) or account['phone_number']}</code> sudah terhubung.",
-                "Langkah berikutnya: kita setting daftar grup.",
+                "<blockquote>Langkah berikutnya: buka 📌 Add Grup untuk memilih target share.</blockquote>",
             ]))
         except Exception as exc:
             print(f"login_flow failed: {exc}", flush=True)
@@ -697,10 +701,10 @@ def login_flow(account_id: int, login_token: str, timeout_seconds: int = 300) ->
                 (account_id,),
             )
             send_bot_message(account["bot_chat_id"], "\n".join([
-                "<b>Login belum berhasil.</b>",
+                "<b>⚠️ Login belum berhasil.</b>",
                 "",
                 f"Alasan: <code>{str(exc)[:350]}</code>",
-                "Klik <b>Buat Userbot</b> untuk mencoba ulang.",
+                "Klik <b>🚀 Buat Userbot</b> untuk mencoba ulang.",
             ]))
             raise
         finally:
@@ -1301,7 +1305,7 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
     reply = get_replied_message(client, message)
 
     if not reply:
-        notify_share_status(client, message, "Gagal: reply pesan yang mau dishare, lalu ketik !share.")
+        notify_share_status(client, message, "⚠️ Gagal: reply pesan yang mau dishare, lalu ketik !share.")
         return
 
     config = load_config()
@@ -1314,7 +1318,7 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
         )
 
         if not account or account["auth_status"] != "authorized":
-            notify_share_status(client, message, "Gagal: userbot belum authorized.")
+            notify_share_status(client, message, "⚠️ Gagal: userbot belum authorized.")
             return
 
         with conn.cursor() as cursor:
@@ -1329,7 +1333,7 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
             groups = cursor.fetchall()
 
         if not groups:
-            notify_share_status(client, message, "Gagal: belum ada grup aktif. Pilih grup dulu dari menu Add Grup.")
+            notify_share_status(client, message, "📭 Gagal: belum ada grup aktif. Pilih grup dulu dari menu 📌 Add Grup.")
             return
 
         share_id = create_share_record_from_reply(conn, account_id, message, reply, client)
@@ -1340,7 +1344,7 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
         status_message = notify_share_status(
             client,
             message,
-            f"Memproses share ke {len(groups)} grup...\nBerhasil: 0. Gagal: 0.",
+            f"⚡ Memproses share ke {len(groups)} grup...\n✅ Berhasil: 0\n❌ Gagal: 0",
         )
 
         for index, group in enumerate(groups, start=1):
@@ -1394,9 +1398,10 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
                     client,
                     message,
                     "\n".join([
-                        f"Memproses share ke {len(groups)} grup...",
-                        f"Gagal {index}/{len(groups)}: {group_name}",
-                        f"Berhasil: {sent_count}. Gagal: {failed_count}.",
+                        f"⚡ Memproses share ke {len(groups)} grup...",
+                        f"❌ Gagal {index}/{len(groups)}: {group_name}",
+                        f"✅ Berhasil: {sent_count}",
+                        f"❌ Gagal: {failed_count}",
                         "",
                         user_friendly_delivery_error(error_text),
                     ]),
@@ -1412,13 +1417,13 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
 
         update_share_totals(conn, share_id, len(groups), sent_count, failed_count, status)
 
-    result_text = f"Share selesai. Berhasil: {sent_count}. Gagal: {failed_count}."
+    result_text = f"✅ Share selesai.\n\nBerhasil: {sent_count}\nGagal: {failed_count}"
 
     if sent_count:
-        result_text += "\nPesan berhasil dikirim ke grup target."
+        result_text += "\n\n⚡ Pesan berhasil dikirim ke grup target."
 
     if failed_errors:
-        result_text += "\n\nGagal pertama:\n" + short_error(failed_errors[0])
+        result_text += "\n\n⚠️ Gagal pertama:\n" + short_error(failed_errors[0])
 
     notify_share_status(client, message, result_text, status_message)
 
