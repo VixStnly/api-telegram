@@ -1403,6 +1403,23 @@ def notify_share_status(client: Client, message, text: str, status_message=None)
             return None
 
 
+def send_share_result_status(client: Client, message, text: str):
+    try:
+        return client.send_message(
+            chat_id=message.chat.id,
+            text=text,
+            reply_to_message_id=message.id,
+        )
+    except Exception as reply_exc:
+        print(f"share result reply failed: {reply_exc}", flush=True)
+
+    try:
+        return client.send_message(message.chat.id, text)
+    except Exception as send_exc:
+        print(f"share result send failed: {send_exc}", flush=True)
+        return None
+
+
 def build_share_result_text(sent_count: int, failed_count: int, failed_errors: list[str]) -> str:
     result_text = f"✅ Share selesai.\n\nBerhasil: {sent_count}\nGagal: {failed_count}"
 
@@ -1485,10 +1502,9 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
         sent_count = 0
         failed_count = 0
         failed_errors = []
-        status_message = None
 
         try:
-            status_message = notify_share_status(
+            notify_share_status(
                 client,
                 message,
                 f"⚡ Memproses share ke {len(groups)} grup...",
@@ -1559,8 +1575,12 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
             mark_share_interrupted(conn, share_id, len(groups), sent_count, failed_count, exc)
             raise
         result_text = build_share_result_text(sent_count, failed_count, failed_errors)
+        print(
+            f"share command completed account_id={account_id} share_id={share_id} sent={sent_count} failed={failed_count}",
+            flush=True,
+        )
 
-    notify_share_status(client, message, result_text, status_message)
+    send_share_result_status(client, message, result_text)
 
 
 def handle_userbot_command(client: Client, message, account_id: int, delay_seconds: float) -> None:
