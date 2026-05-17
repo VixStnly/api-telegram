@@ -487,7 +487,9 @@ def login_flow(account_id: int, login_token: str, timeout_seconds: int = 300) ->
         print(f"sending code phone={account['phone_number']} session={account['session_name']}", flush=True)
         clear_session_files(account["session_name"])
 
-        app = client_for(account, config)
+        account["session_string"] = None
+        account["pending_session_string"] = None
+        app = client_for(account, config, use_session_string=False)
 
         try:
             app.connect()
