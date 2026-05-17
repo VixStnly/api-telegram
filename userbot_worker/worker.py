@@ -1003,13 +1003,38 @@ def get_replied_message(client: Client, message):
     return client.get_messages(chat_id=message.chat.id, message_ids=reply_id)
 
 
+def source_chat_for_copy(client: Client, message):
+    chat = getattr(message, "chat", None)
+    chat_id = getattr(chat, "id", None)
+
+    try:
+        me = client.get_me()
+
+        if chat_id is not None and str(chat_id) == str(getattr(me, "id", "")):
+            return "me"
+    except Exception:
+        pass
+
+    return chat_id
+
+
+def short_error(text: str, limit: int = 450) -> str:
+    text = " ".join(str(text).split())
+
+    if len(text) <= limit:
+        return text
+
+    return text[: limit - 3] + "..."
+
+
 def send_replied_message_to_group(client: Client, group: dict[str, Any], command_message, reply):
     target = target_for_group(group)
+    source = source_chat_for_copy(client, command_message)
 
     try:
         return client.copy_message(
             chat_id=target,
-            from_chat_id=command_message.chat.id,
+            from_chat_id=source,
             message_id=reply.id,
         )
     except Exception as copy_exc:
@@ -1098,6 +1123,7 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
         share_id = create_share_record_from_reply(conn, account_id, message, reply)
         sent_count = 0
         failed_count = 0
+        failed_errors = []
 
         notify_share_status(client, message, f"Memproses share ke {len(groups)} grup...")
 
@@ -1121,6 +1147,8 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
                 )
             except Exception as exc:
                 failed_count += 1
+                error_text = str(exc)
+                failed_errors.append(f"{group.get('title') or group.get('chat_id')}: {error_text}")
                 execute(
                     conn,
                     """
@@ -1130,7 +1158,7 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
                         updated_at = now()
                     where id = %s
                     """,
-                    (str(exc), delivery_id),
+                    (error_text, delivery_id),
                 )
 
             if delay_seconds > 0:
@@ -1142,11 +1170,12 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
 
         update_share_totals(conn, share_id, len(groups), sent_count, failed_count, status)
 
-    notify_share_status(
-        client,
-        message,
-        f"Share selesai. Berhasil: {sent_count}. Gagal: {failed_count}.",
-    )
+    result_text = f"Share selesai. Berhasil: {sent_count}. Gagal: {failed_count}."
+
+    if failed_errors:
+        result_text += "\n\nError pertama:\n" + short_error(failed_errors[0])
+
+    notify_share_status(client, message, result_text)
 
 
 def poll_saved_messages_for_share(
