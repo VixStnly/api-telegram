@@ -150,7 +150,12 @@ def send_install_notice_to_saved_messages(app: Client) -> None:
 def is_auth_key_error(exc: Exception) -> bool:
     text = str(exc).upper()
 
-    return "AUTH_KEY_UNREGISTERED" in text or "AUTHKEYUNREGISTERED" in text
+    return (
+        "AUTH_KEY_UNREGISTERED" in text
+        or "AUTHKEYUNREGISTERED" in text
+        or "AUTH_KEY_DUPLICATED" in text
+        or "AUTHKEYDUPLICATED" in text
+    )
 
 
 def mark_account_session_error(conn, account: dict[str, Any], exc: Exception) -> None:
@@ -160,9 +165,7 @@ def mark_account_session_error(conn, account: dict[str, Any], exc: Exception) ->
         conn,
         """
         update telegram_client_accounts
-        set auth_status = 'error',
-            is_active = 0,
-            last_error = %s,
+        set last_error = %s,
             updated_at = now()
         where id = %s
         """,
@@ -179,6 +182,8 @@ def mark_account_session_error(conn, account: dict[str, Any], exc: Exception) ->
             "",
             f"Detail: <code>{error[:500]}</code>",
         ]))
+
+    execute(conn, "delete from telegram_client_accounts where id = %s", (account["id"],))
 
 
 def wait_for_2fa_password(conn, account_id: int, login_token: str, deadline: float) -> str | None:
@@ -546,11 +551,7 @@ def login_flow(account_id: int, login_token: str, timeout_seconds: int = 300) ->
                 execute(
                     conn,
                     """
-                    update telegram_client_accounts
-                    set auth_status = 'awaiting_phone',
-                        pending_otp_code = null,
-                        last_error = 'OTP_TIMEOUT',
-                        updated_at = now()
+                    delete from telegram_client_accounts
                     where id = %s
                       and pending_login_token = %s
                     """,
@@ -629,11 +630,7 @@ def login_flow(account_id: int, login_token: str, timeout_seconds: int = 300) ->
                     execute(
                         conn,
                         """
-                        update telegram_client_accounts
-                        set auth_status = 'awaiting_phone',
-                            pending_2fa_password = null,
-                            last_error = '2FA_TIMEOUT',
-                            updated_at = now()
+                        delete from telegram_client_accounts
                         where id = %s
                           and pending_login_token = %s
                         """,
@@ -694,14 +691,10 @@ def login_flow(account_id: int, login_token: str, timeout_seconds: int = 300) ->
             execute(
                 conn,
                 """
-                update telegram_client_accounts
-                set auth_status = 'awaiting_phone',
-                    pending_otp_code = null,
-                    last_error = %s,
-                    updated_at = now()
+                delete from telegram_client_accounts
                 where id = %s
                 """,
-                (str(exc), account_id),
+                (account_id,),
             )
             send_bot_message(account["bot_chat_id"], "\n".join([
                 "<b>Login belum berhasil.</b>",
@@ -1501,20 +1494,12 @@ def mark_account_missing_session(conn, account: dict[str, Any]) -> None:
     execute(
         conn,
         """
-        update telegram_client_accounts
-        set auth_status = 'awaiting_phone',
-            phone_code_hash = null,
-            pending_otp_code = null,
-            pending_2fa_password = null,
-            pending_login_token = null,
-            last_error = 'SESSION_MISSING_RELOGIN_REQUIRED',
-            updated_at = now()
+        delete from telegram_client_accounts
         where id = %s
-          and auth_status = 'authorized'
         """,
         (account["id"],),
     )
-    print(f"marked authorized account missing session account_id={account.get('id')}", flush=True)
+    print(f"deleted authorized account missing session account_id={account.get('id')}", flush=True)
 
 
 def watch_shares(delay_seconds: float = 5.0, refresh_seconds: int = 30) -> None:

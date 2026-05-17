@@ -180,16 +180,8 @@ class TelegramWebhookController extends Controller
                     && ! $sessionFileExists;
 
                 if ($needsRelogin) {
-                    $account->update([
-                        'auth_status' => 'awaiting_phone',
-                        'phone_code_hash' => null,
-                        'pending_otp_code' => null,
-                        'pending_2fa_password' => null,
-                        'pending_login_token' => null,
-                        'last_error' => 'SESSION_MISSING_RELOGIN_REQUIRED',
-                    ]);
-
-                    $account = $account->fresh();
+                    $account->delete();
+                    $account = null;
                 }
 
                 $telegram->sendMessage($chatId, implode("\n", [
@@ -297,6 +289,7 @@ class TelegramWebhookController extends Controller
         }
 
         if ($data === 'userbot:create') {
+            $this->deleteIncompleteClientAccounts($chatId);
             $account = $this->newClientAccount($chatId, $from);
 
             $account->update([
@@ -319,6 +312,11 @@ class TelegramWebhookController extends Controller
         if ($data === 'userbot:list') {
             $accounts = TelegramClientAccount::where('bot_chat_id', $chatId)
                 ->whereNotNull('phone_number')
+                ->where('auth_status', 'authorized')
+                ->where(function ($query) {
+                    $query->whereNotNull('session_string')
+                        ->orWhereNotNull('pending_session_string');
+                })
                 ->latest()
                 ->get();
 
@@ -737,18 +735,14 @@ class TelegramWebhookController extends Controller
                 || ($account->bot_user_id !== null && $existingAccount->bot_user_id === $account->bot_user_id);
 
             if (! $sameOwner) {
-                $account->update([
-                    'auth_status' => 'idle',
-                    'last_error' => 'PHONE_ALREADY_REGISTERED',
-                    'last_seen_at' => now(),
-                ]);
-
                 $telegram->sendMessage($account->bot_chat_id, implode("\n", [
                     '<b>Nomor ini sudah terdaftar.</b>',
                     '',
                     'Nomor tersebut sudah dipakai di akun userbot lain.',
                     'Kalau ini nomor kamu, hubungi admin untuk reset data lama.',
                 ]), ['parse_mode' => 'HTML']);
+
+                $account->delete();
 
                 return true;
             }
@@ -808,6 +802,16 @@ class TelegramWebhookController extends Controller
 
             $freshAccount = $this->waitForLoginWorkerStatus($account->fresh(), $loginToken);
 
+            if (! $freshAccount) {
+                $telegram->sendMessage($account->bot_chat_id, implode("\n", [
+                    '<b>Login gagal.</b>',
+                    '',
+                    'Data percobaan login sudah dibersihkan. Klik <b>Buat Userbot</b> untuk mencoba ulang.',
+                ]), ['parse_mode' => 'HTML']);
+
+                return true;
+            }
+
             if ($freshAccount && $freshAccount->last_error) {
                 $telegram->sendMessage($account->bot_chat_id, implode("\n", [
                     '<b>Belum bisa meminta kode OTP.</b>',
@@ -817,6 +821,8 @@ class TelegramWebhookController extends Controller
                     '',
                     'Klik <b>Buat Userbot</b> untuk mencoba ulang.',
                 ]), ['parse_mode' => 'HTML']);
+
+                $freshAccount->delete();
 
                 return true;
             }
@@ -849,12 +855,6 @@ class TelegramWebhookController extends Controller
             return true;
         }
 
-        $account->fresh()->update([
-            'auth_status' => 'idle',
-            'pending_login_token' => null,
-            'last_error' => $result['error'] ?: $result['output'],
-        ]);
-
         $telegram->sendMessage($account->bot_chat_id, implode("\n", [
             '<b>Belum bisa mengirim OTP.</b>',
             '',
@@ -862,6 +862,8 @@ class TelegramWebhookController extends Controller
             $this->formatWorkerErrorForTelegram($result, 'Detail'),
             'Coba lagi beberapa saat, atau hubungi admin.',
         ]), ['parse_mode' => 'HTML']);
+
+        $account->delete();
 
         return true;
     }
@@ -955,6 +957,20 @@ class TelegramWebhookController extends Controller
         $account->save();
 
         return $account;
+    }
+
+    protected function deleteIncompleteClientAccounts(string $chatId): void
+    {
+        TelegramClientAccount::where('bot_chat_id', $chatId)
+            ->where(function ($query) {
+                $query->where('auth_status', '!=', 'authorized')
+                    ->orWhere(function ($query) {
+                        $query->where('auth_status', 'authorized')
+                            ->whereNull('session_string')
+                            ->whereNull('pending_session_string');
+                    });
+            })
+            ->delete();
     }
 
     protected function findOrRegisterClientAccount(string $chatId, array $from): TelegramClientAccount
