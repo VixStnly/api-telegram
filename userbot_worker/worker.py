@@ -132,18 +132,6 @@ def send_bot_message(chat_id: str, text: str) -> None:
         pass
 
 
-def try_send_bot_message(chat_id: str | None, text: str) -> bool:
-    if not chat_id:
-        return False
-
-    try:
-        send_bot_message(chat_id, text)
-        return True
-    except Exception as exc:
-        print(f"bot status message failed chat_id={chat_id}: {exc}", flush=True)
-        return False
-
-
 def installed_message() -> str:
     return "\n".join([
         "✅ Userbot berhasil dipasang.",
@@ -793,6 +781,12 @@ def login_flow(account_id: int, login_token: str, timeout_seconds: int = 300) ->
 
 
 def target_for_group(group: dict[str, Any]) -> int | str:
+    if group.get("username"):
+        username = str(group["username"]).strip()
+
+        if username:
+            return username
+
     if group.get("chat_id"):
         chat_id = str(group["chat_id"]).strip()
 
@@ -800,8 +794,6 @@ def target_for_group(group: dict[str, Any]) -> int | str:
             return int(chat_id)
 
         return chat_id
-    if group.get("username"):
-        return group["username"]
     if group.get("invite_link"):
         return group["invite_link"]
     raise RuntimeError(f"Group {group['id']} has no target")
@@ -1244,6 +1236,17 @@ def is_peer_invalid_error(exc: Exception) -> bool:
     return "PEER_ID_INVALID" in text or "PEER ID INVALID" in text or "PEER_ID" in text
 
 
+def is_permanent_group_error(exc: Exception) -> bool:
+    text = str(exc).upper()
+
+    return (
+        is_peer_invalid_error(exc)
+        or "CHAT_WRITE_FORBIDDEN" in text
+        or "USER_BANNED_IN_CHANNEL" in text
+        or "CHANNEL_PRIVATE" in text
+    )
+
+
 def warm_group_peer(client: Client, group: dict[str, Any]):
     target = target_for_group(group)
 
@@ -1271,7 +1274,7 @@ def retry_resolved_group_target(client: Client, group: dict[str, Any]):
 
     if str(warmed_target) == str(target):
         title = group.get("title") or group.get("chat_id") or target
-        raise RuntimeError(f"PEER_ID_INVALID: userbot belum bisa resolve grup {title}. Buka Add Grup ulang lalu pilih grup ini lagi.")
+        print(f"peer warm did not find group={title}; retrying original target", flush=True)
 
     return warmed_target
 
@@ -1482,10 +1485,12 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
         sent_count = 0
         failed_count = 0
         failed_errors = []
+        status_message = None
 
         try:
-            try_send_bot_message(
-                account.get("bot_chat_id"),
+            status_message = notify_share_status(
+                client,
+                message,
                 f"⚡ Memproses share ke {len(groups)} grup...",
             )
 
@@ -1530,14 +1535,16 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
                         (error_text, delivery_id),
                     )
                     update_share_progress(conn, share_id, len(groups), sent_count, failed_count)
-                    execute(
-                        conn,
-                        """
-                        delete from telegram_client_groups
-                        where id = %s
-                        """,
-                        (group["id"],),
-                    )
+
+                    if is_permanent_group_error(exc):
+                        execute(
+                            conn,
+                            """
+                            delete from telegram_client_groups
+                            where id = %s
+                            """,
+                            (group["id"],),
+                        )
 
                 if delay_seconds > 0 and index < len(groups):
                     time.sleep(delay_seconds)
@@ -1552,10 +1559,8 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
             mark_share_interrupted(conn, share_id, len(groups), sent_count, failed_count, exc)
             raise
         result_text = build_share_result_text(sent_count, failed_count, failed_errors)
-        bot_status_sent = try_send_bot_message(account.get("bot_chat_id"), result_text)
 
-    if not bot_status_sent:
-        notify_share_status(client, message, result_text)
+    notify_share_status(client, message, result_text, status_message)
 
 
 def handle_userbot_command(client: Client, message, account_id: int, delay_seconds: float) -> None:
