@@ -1249,7 +1249,7 @@ def warm_group_peer(client: Client, group: dict[str, Any]):
     return target
 
 
-def resolve_group_target(client: Client, group: dict[str, Any]):
+def retry_resolved_group_target(client: Client, group: dict[str, Any]):
     target = target_for_group(group)
 
     if not isinstance(target, int):
@@ -1265,7 +1265,7 @@ def resolve_group_target(client: Client, group: dict[str, Any]):
 
 
 def forward_source_message_to_group(client: Client, group: dict[str, Any], source_chat_id, message_id: int):
-    target = resolve_group_target(client, group)
+    target = target_for_group(group)
 
     try:
         forwarded = client.forward_messages(
@@ -1280,7 +1280,7 @@ def forward_source_message_to_group(client: Client, group: dict[str, Any], sourc
         return forwarded
     except Exception as forward_exc:
         if is_peer_invalid_error(forward_exc):
-            target = warm_group_peer(client, group)
+            target = retry_resolved_group_target(client, group)
 
             try:
                 forwarded = client.forward_messages(
@@ -1300,7 +1300,7 @@ def forward_source_message_to_group(client: Client, group: dict[str, Any], sourc
 
 
 def send_replied_message_to_group(client: Client, group: dict[str, Any], command_message, reply):
-    target = resolve_group_target(client, group)
+    target = target_for_group(group)
     source = source_chat_for_copy(client, command_message)
     reply_text = (getattr(reply, "text", None) or "").strip()
 
@@ -1314,7 +1314,7 @@ def send_replied_message_to_group(client: Client, group: dict[str, Any], command
             return client.send_message(chat_id=target, text=reply_text)
         except Exception as send_exc:
             if is_peer_invalid_error(send_exc):
-                target = warm_group_peer(client, group)
+                target = retry_resolved_group_target(client, group)
 
                 try:
                     return client.send_message(chat_id=target, text=reply_text)
@@ -1331,7 +1331,7 @@ def send_replied_message_to_group(client: Client, group: dict[str, Any], command
         )
     except Exception as copy_exc:
         if is_peer_invalid_error(copy_exc):
-            target = warm_group_peer(client, group)
+            target = retry_resolved_group_target(client, group)
 
             try:
                 return client.copy_message(
@@ -1351,7 +1351,7 @@ def send_replied_message_to_group(client: Client, group: dict[str, Any], command
             return client.send_message(chat_id=target, text=fallback_text)
         except Exception as send_exc:
             if is_peer_invalid_error(send_exc):
-                target = warm_group_peer(client, group)
+                target = retry_resolved_group_target(client, group)
 
                 try:
                     return client.send_message(chat_id=target, text=fallback_text)
@@ -1386,6 +1386,16 @@ def notify_share_status(client: Client, message, text: str, status_message=None)
             return client.send_message(message.chat.id, text)
         except Exception:
             return None
+
+
+def should_update_share_status(index: int, total: int, last_update_at: float, every_groups: int = 10, every_seconds: float = 2.0) -> bool:
+    if index == 1 or index == total:
+        return True
+
+    if every_groups > 0 and index % every_groups == 0:
+        return True
+
+    return (time.monotonic() - last_update_at) >= every_seconds
 
 
 def handle_ping_command(client: Client, message, account_id: int) -> None:
@@ -1459,6 +1469,7 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
         failed_count = 0
         failed_errors = []
         status_message = None
+        last_status_update_at = 0.0
 
         try:
             status_message = notify_share_status(
@@ -1466,6 +1477,7 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
                 message,
                 f"⚡ Memproses share ke {len(groups)} grup...\n✅ Berhasil: 0\n❌ Gagal: 0",
             )
+            last_status_update_at = time.monotonic()
 
             for index, group in enumerate(groups, start=1):
                 group_name = group.get("title") or group.get("chat_id") or f"grup #{index}"
@@ -1490,17 +1502,19 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
                         (str(copied.id), delivery_id),
                     )
                     update_share_progress(conn, share_id, len(groups), sent_count, failed_count)
-                    status_message = notify_share_status(
-                        client,
-                        message,
-                        "\n".join([
-                            f"⚡ Memproses share ke {len(groups)} grup...",
-                            f"✅ Terkirim {index}/{len(groups)}: {group_name}",
-                            f"✅ Berhasil: {sent_count}",
-                            f"❌ Gagal: {failed_count}",
-                        ]),
-                        status_message,
-                    )
+                    if should_update_share_status(index, len(groups), last_status_update_at):
+                        status_message = notify_share_status(
+                            client,
+                            message,
+                            "\n".join([
+                                f"⚡ Memproses share ke {len(groups)} grup...",
+                                f"✅ Terkirim {index}/{len(groups)}: {group_name}",
+                                f"✅ Berhasil: {sent_count}",
+                                f"❌ Gagal: {failed_count}",
+                            ]),
+                            status_message,
+                        )
+                        last_status_update_at = time.monotonic()
                 except Exception as exc:
                     failed_count += 1
                     duration = time.monotonic() - started_at
