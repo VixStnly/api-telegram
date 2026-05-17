@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\TelegramClientAccount;
 use App\Models\TelegramClientGroup;
+use App\Models\TelegramAccessCode;
 use App\Models\TelegramGroup;
 use App\Services\AutoReplyEngine;
 use App\Services\PyrogramWorkerService;
@@ -75,7 +76,7 @@ class TelegramWebhookController extends Controller
             if ($text === '/start' && $chatId !== '') {
                 $account = $this->registerClientAccount($chatId, $from);
 
-                if (! in_array($account->auth_status, ['authorized', 'sending_code', 'awaiting_code', 'awaiting_password'], true)) {
+                if (! in_array($account->auth_status, ['authorized', 'awaiting_access_code', 'sending_code', 'awaiting_code', 'awaiting_password'], true)) {
                     $account->update([
                         'auth_status' => 'idle',
                         'phone_code_hash' => null,
@@ -292,16 +293,17 @@ class TelegramWebhookController extends Controller
             $account = $this->newClientAccount($chatId, $from);
 
             $account->update([
-                'auth_status' => 'awaiting_phone',
+                'auth_status' => 'awaiting_access_code',
                 'phone_code_hash' => null,
                 'pending_session_string' => null,
                 'pending_2fa_password' => null,
                 'pending_login_token' => null,
                 'last_error' => null,
+                'meta' => null,
                 'last_seen_at' => now(),
             ]);
 
-            $telegram->sendMessage($chatId, $this->requestPhoneMessage(), [
+            $telegram->sendMessage($chatId, $this->requestAccessCodeMessage(), [
                 'parse_mode' => 'HTML',
                 'reply_markup' => $this->mainMenuKeyboard(),
             ]);
@@ -736,6 +738,10 @@ class TelegramWebhookController extends Controller
             return false;
         }
 
+        if ($account->auth_status === 'awaiting_access_code') {
+            return $this->handleAccessCode($account, $text, $telegram);
+        }
+
         if ($account->auth_status === 'awaiting_phone') {
             return $this->handlePhoneNumber($account, $text, $telegram, $pyrogram);
         }
@@ -767,6 +773,57 @@ class TelegramWebhookController extends Controller
         }
 
         return false;
+    }
+
+    protected function handleAccessCode(
+        TelegramClientAccount $account,
+        string $text,
+        TelegramBotService $telegram
+    ): bool {
+        $codeText = $this->normalizeAccessCode($text);
+        $accessCode = TelegramAccessCode::where('code', $codeText)->first();
+
+        if (! $accessCode || ! $accessCode->isAvailable()) {
+            $telegram->sendMessage($account->bot_chat_id, implode("\n", [
+                '<b>⚠️ Kode akses tidak valid.</b>',
+                '',
+                $this->quote('Pastikan kode masih aktif, belum expired, dan belum melewati batas pemakaian. Hubungi admin kalau belum punya kode.'),
+            ]), [
+                'parse_mode' => 'HTML',
+                'reply_markup' => $this->mainMenuKeyboard(),
+            ]);
+
+            return true;
+        }
+
+        DB::transaction(function () use ($account, $accessCode, $codeText) {
+            $accessCode->markUsed();
+
+            $account->fresh()->update([
+                'auth_status' => 'awaiting_phone',
+                'last_seen_at' => now(),
+                'meta' => array_merge($account->meta ?? [], [
+                    'access_code' => [
+                        'id' => $accessCode->id,
+                        'code' => $codeText,
+                        'validated_at' => now()->toISOString(),
+                    ],
+                ]),
+            ]);
+        });
+
+        $telegram->sendMessage($account->bot_chat_id, implode("\n", [
+            '<b>✅ Kode akses diterima.</b>',
+            '',
+            $this->quote('Sekarang kirim nomor Telegram yang ingin kamu hubungkan.'),
+            '',
+            'Contoh: <code>+6281234567890</code>',
+        ]), [
+            'parse_mode' => 'HTML',
+            'reply_markup' => $this->mainMenuKeyboard(),
+        ]);
+
+        return true;
     }
 
     protected function handlePhoneNumber(
@@ -1089,16 +1146,17 @@ class TelegramWebhookController extends Controller
         $query = TelegramClientAccount::where('bot_chat_id', $chatId);
 
         if (! $includeAuthorized) {
-            $query->whereIn('auth_status', ['awaiting_phone', 'sending_code', 'awaiting_code', 'awaiting_password', 'idle']);
+            $query->whereIn('auth_status', ['awaiting_access_code', 'awaiting_phone', 'sending_code', 'awaiting_code', 'awaiting_password', 'idle']);
         }
 
         return $query
             ->orderByRaw("
                 case
                     when auth_status in ('sending_code', 'awaiting_code', 'awaiting_password') then 0
-                    when auth_status = 'awaiting_phone' then 1
-                    when auth_status = 'authorized' then 2
-                    else 3
+                    when auth_status = 'awaiting_access_code' then 1
+                    when auth_status = 'awaiting_phone' then 2
+                    when auth_status = 'authorized' then 3
+                    else 4
                 end
             ")
             ->latest()
@@ -1146,6 +1204,11 @@ class TelegramWebhookController extends Controller
         return $phoneNumber;
     }
 
+    protected function normalizeAccessCode(string $text): string
+    {
+        return strtoupper(trim($text));
+    }
+
     protected function looksLikePhoneNumber(string $text): bool
     {
         $clean = preg_replace('/[^\d+]+/', '', trim($text));
@@ -1165,6 +1228,17 @@ class TelegramWebhookController extends Controller
             '<b>✨ Mulai dari menu dulu.</b>',
             '',
             $this->quote('Untuk membuat userbot, klik tombol 🚀 Buat Userbot lalu ikuti instruksi nomor dan OTP dari bot ini.'),
+        ]);
+    }
+
+    protected function requestAccessCodeMessage(): string
+    {
+        return implode("\n", [
+            '<b>🔐 Kode Akses Userbot</b>',
+            '',
+            $this->quote('Masukkan kode akses dari admin dulu sebelum membuat userbot.'),
+            '',
+            'Kirim kode akses di chat ini.',
         ]);
     }
 

@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\TelegramClientAccount;
 use App\Models\TelegramClientGroup;
+use App\Models\TelegramAccessCode;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Process;
@@ -65,11 +66,11 @@ class TelegramWebhookStartTest extends TestCase
             return $request->url() === 'https://api.telegram.org/bottesting-token/sendMessage'
                 && $request['chat_id'] === '987654321'
                 && str_contains($request['text'], 'Selamat datang di VixStore AutoShare')
-                && ($request['reply_markup']['inline_keyboard'][0][0]['text'] ?? null) === 'Buat Userbot';
+                && str_contains(($request['reply_markup']['inline_keyboard'][0][0]['text'] ?? ''), 'Buat Userbot');
         });
     }
 
-    public function test_create_userbot_button_requests_phone_number(): void
+    public function test_create_userbot_button_requests_access_code(): void
     {
         config([
             'services.telegram.bot_token' => 'testing-token',
@@ -107,12 +108,180 @@ class TelegramWebhookStartTest extends TestCase
 
         $this->assertDatabaseHas('telegram_client_accounts', [
             'bot_chat_id' => '987654321',
-            'auth_status' => 'awaiting_phone',
+            'auth_status' => 'awaiting_access_code',
         ]);
 
         Http::assertSent(function ($request) {
             return $request->url() === 'https://api.telegram.org/bottesting-token/sendMessage'
-                && str_contains($request['text'], 'Kirim nomor Telegram');
+                && str_contains($request['text'], 'Kode Akses Userbot');
+        });
+    }
+
+    public function test_valid_access_code_unlocks_phone_number_step(): void
+    {
+        config([
+            'services.telegram.bot_token' => 'testing-token',
+            'services.telegram.webhook_secret' => 'testing-secret',
+        ]);
+
+        Http::fake([
+            'https://api.telegram.org/bottesting-token/sendMessage' => Http::response(['ok' => true]),
+        ]);
+
+        $accessCode = TelegramAccessCode::create([
+            'code' => 'VIX-2026',
+            'label' => 'Tester',
+            'is_active' => true,
+            'max_uses' => 1,
+        ]);
+
+        $account = TelegramClientAccount::create([
+            'bot_chat_id' => '987654321',
+            'bot_user_id' => '987654321',
+            'session_name' => 'client_987654321_test',
+            'auth_status' => 'awaiting_access_code',
+            'is_active' => true,
+        ]);
+
+        $response = $this
+            ->withHeader('X-Telegram-Bot-Api-Secret-Token', 'testing-secret')
+            ->postJson('/telegram/webhook', [
+                'update_id' => 25,
+                'message' => [
+                    'message_id' => 20,
+                    'text' => ' vix-2026 ',
+                    'chat' => [
+                        'id' => 987654321,
+                        'type' => 'private',
+                    ],
+                    'from' => [
+                        'id' => 987654321,
+                        'is_bot' => false,
+                        'first_name' => 'Tester',
+                    ],
+                ],
+            ]);
+
+        $response->assertOk()->assertJson(['ok' => true]);
+
+        $account->refresh();
+        $accessCode->refresh();
+
+        $this->assertSame('awaiting_phone', $account->auth_status);
+        $this->assertSame(1, $accessCode->used_count);
+        $this->assertSame('VIX-2026', $account->meta['access_code']['code'] ?? null);
+
+        Http::assertSent(function ($request) {
+            return $request->url() === 'https://api.telegram.org/bottesting-token/sendMessage'
+                && str_contains($request['text'], 'Kode akses diterima')
+                && str_contains($request['text'], 'Contoh: <code>+6281234567890</code>');
+        });
+    }
+
+    public function test_invalid_access_code_does_not_unlock_phone_number_step(): void
+    {
+        config([
+            'services.telegram.bot_token' => 'testing-token',
+            'services.telegram.webhook_secret' => 'testing-secret',
+        ]);
+
+        Http::fake([
+            'https://api.telegram.org/bottesting-token/sendMessage' => Http::response(['ok' => true]),
+        ]);
+
+        $account = TelegramClientAccount::create([
+            'bot_chat_id' => '987654321',
+            'bot_user_id' => '987654321',
+            'session_name' => 'client_987654321_test',
+            'auth_status' => 'awaiting_access_code',
+            'is_active' => true,
+        ]);
+
+        $response = $this
+            ->withHeader('X-Telegram-Bot-Api-Secret-Token', 'testing-secret')
+            ->postJson('/telegram/webhook', [
+                'update_id' => 26,
+                'message' => [
+                    'message_id' => 21,
+                    'text' => 'SALAH',
+                    'chat' => [
+                        'id' => 987654321,
+                        'type' => 'private',
+                    ],
+                    'from' => [
+                        'id' => 987654321,
+                        'is_bot' => false,
+                        'first_name' => 'Tester',
+                    ],
+                ],
+            ]);
+
+        $response->assertOk()->assertJson(['ok' => true]);
+
+        $account->refresh();
+
+        $this->assertSame('awaiting_access_code', $account->auth_status);
+
+        Http::assertSent(function ($request) {
+            return $request->url() === 'https://api.telegram.org/bottesting-token/sendMessage'
+                && str_contains($request['text'], 'Kode akses tidak valid');
+        });
+    }
+
+    public function test_exhausted_access_code_does_not_unlock_phone_number_step(): void
+    {
+        config([
+            'services.telegram.bot_token' => 'testing-token',
+            'services.telegram.webhook_secret' => 'testing-secret',
+        ]);
+
+        Http::fake([
+            'https://api.telegram.org/bottesting-token/sendMessage' => Http::response(['ok' => true]),
+        ]);
+
+        TelegramAccessCode::create([
+            'code' => 'FULL-QUOTA',
+            'is_active' => true,
+            'max_uses' => 1,
+            'used_count' => 1,
+        ]);
+
+        $account = TelegramClientAccount::create([
+            'bot_chat_id' => '987654321',
+            'bot_user_id' => '987654321',
+            'session_name' => 'client_987654321_test',
+            'auth_status' => 'awaiting_access_code',
+            'is_active' => true,
+        ]);
+
+        $response = $this
+            ->withHeader('X-Telegram-Bot-Api-Secret-Token', 'testing-secret')
+            ->postJson('/telegram/webhook', [
+                'update_id' => 27,
+                'message' => [
+                    'message_id' => 22,
+                    'text' => 'FULL-QUOTA',
+                    'chat' => [
+                        'id' => 987654321,
+                        'type' => 'private',
+                    ],
+                    'from' => [
+                        'id' => 987654321,
+                        'is_bot' => false,
+                        'first_name' => 'Tester',
+                    ],
+                ],
+            ]);
+
+        $response->assertOk()->assertJson(['ok' => true]);
+
+        $account->refresh();
+
+        $this->assertSame('awaiting_access_code', $account->auth_status);
+
+        Http::assertSent(function ($request) {
+            return $request->url() === 'https://api.telegram.org/bottesting-token/sendMessage'
+                && str_contains($request['text'], 'Kode akses tidak valid');
         });
     }
 
@@ -219,7 +388,7 @@ class TelegramWebhookStartTest extends TestCase
         $this->assertDatabaseHas('telegram_client_accounts', [
             'bot_chat_id' => '987654321',
             'phone_number' => null,
-            'auth_status' => 'awaiting_phone',
+            'auth_status' => 'awaiting_access_code',
         ]);
     }
 
@@ -498,7 +667,7 @@ class TelegramWebhookStartTest extends TestCase
         Http::assertSent(function ($request) {
             return $request->url() === 'https://api.telegram.org/bottesting-token/sendMessage'
                 && str_contains($request['text'], 'Mulai dari menu dulu')
-                && ($request['reply_markup']['inline_keyboard'][0][0]['text'] ?? null) === 'Buat Userbot';
+                && str_contains(($request['reply_markup']['inline_keyboard'][0][0]['text'] ?? ''), 'Buat Userbot');
         });
     }
 
