@@ -95,7 +95,7 @@ class PyrogramWorkerService
             escapeshellarg($python),
             escapeshellarg($worker),
             escapeshellarg((string) env('SHARE_DELAY', 0)),
-            escapeshellarg((string) env('SHARE_REFRESH', 5)),
+            escapeshellarg((string) env('SHARE_REFRESH', 1)),
             escapeshellarg($log)
         );
 

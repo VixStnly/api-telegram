@@ -1162,44 +1162,11 @@ def handle_ping_command(client: Client, message, account_id: int) -> None:
     if not is_self_command_message(message) or not is_ping_command(message):
         return
 
+    started_at = time.monotonic()
     print(
         f"!ping command received account_id={account_id} chat_id={getattr(getattr(message, 'chat', None), 'id', None)} message_id={getattr(message, 'id', None)}",
         flush=True,
     )
-
-    username = "-"
-    active_groups = 0
-    account_status = "-"
-
-    try:
-        me = client.get_me()
-        username = getattr(me, "username", None) or getattr(me, "first_name", None) or str(getattr(me, "id", "-"))
-    except Exception as exc:
-        username = f"get_me gagal: {short_error(str(exc), 120)}"
-
-    try:
-        config = load_config()
-
-        with db_connect(config) as conn:
-            account = fetch_one(
-                conn,
-                "select auth_status from telegram_client_accounts where id = %s limit 1",
-                (account_id,),
-            )
-            account_status = account["auth_status"] if account else "not_found"
-
-            with conn.cursor() as cursor:
-                cursor.execute(
-                    """
-                    select count(*) as total
-                    from telegram_client_groups
-                    where telegram_client_account_id = %s and status = 'active'
-                    """,
-                    (account_id,),
-                )
-                active_groups = int(cursor.fetchone()["total"])
-    except Exception as exc:
-        account_status = f"db gagal: {short_error(str(exc), 120)}"
 
     notify_share_status(
         client,
@@ -1208,12 +1175,10 @@ def handle_ping_command(client: Client, message, account_id: int) -> None:
             "pong",
             f"Watcher: aktif",
             f"Account ID: {account_id}",
-            f"Userbot: {username}",
-            f"Status DB: {account_status}",
-            f"Grup aktif: {active_groups}",
             f"Waktu: {time.strftime('%Y-%m-%d %H:%M:%S')} UTC",
         ]),
     )
+    print(f"!ping responded account_id={account_id} seconds={time.monotonic() - started_at:.2f}", flush=True)
 
 
 def handle_share_command(client: Client, message, account_id: int, delay_seconds: float) -> None:
@@ -1539,7 +1504,7 @@ def mark_account_missing_session(conn, account: dict[str, Any]) -> None:
     print(f"deleted authorized account missing session account_id={account.get('id')}", flush=True)
 
 
-def watch_shares(delay_seconds: float = 0.0, refresh_seconds: int = 5) -> None:
+def watch_shares(delay_seconds: float = 0.0, refresh_seconds: int = 1) -> None:
     watcher_lock = acquire_watcher_lock()
 
     if watcher_lock is None:
@@ -1683,7 +1648,7 @@ def main() -> None:
 
     watch_shares_parser = subparsers.add_parser("watch-shares")
     watch_shares_parser.add_argument("--delay", type=float, default=0.0)
-    watch_shares_parser.add_argument("--refresh", type=int, default=5)
+    watch_shares_parser.add_argument("--refresh", type=int, default=1)
 
     args = parser.parse_args()
 
