@@ -648,6 +648,10 @@ def login_flow(account_id: int, login_token: str, timeout_seconds: int = 300) ->
                 session_string = app.export_session_string()
             except Exception as exc:
                 print(f"session string export failed: {exc}", flush=True)
+
+            if not session_string:
+                raise RuntimeError("SESSION_STRING_EXPORT_FAILED")
+
             print("authorized", flush=True)
 
             execute(

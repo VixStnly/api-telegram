@@ -173,6 +173,24 @@ class TelegramWebhookController extends Controller
                 $log = is_file($logPath) ? file_get_contents($logPath) : 'Log watcher belum ada.';
                 $log = Str::limit(trim((string) $log), 2500);
                 $sessionFile = $account ? storage_path('app/telegram-sessions/'.$account->session_name.'.session') : null;
+                $sessionFileExists = $sessionFile && is_file($sessionFile);
+                $needsRelogin = $account
+                    && ! $account->session_string
+                    && ! $account->pending_session_string
+                    && ! $sessionFileExists;
+
+                if ($needsRelogin) {
+                    $account->update([
+                        'auth_status' => 'awaiting_phone',
+                        'phone_code_hash' => null,
+                        'pending_otp_code' => null,
+                        'pending_2fa_password' => null,
+                        'pending_login_token' => null,
+                        'last_error' => 'SESSION_MISSING_RELOGIN_REQUIRED',
+                    ]);
+
+                    $account = $account->fresh();
+                }
 
                 $telegram->sendMessage($chatId, implode("\n", [
                     '<b>Debug Share Watcher</b>',
@@ -184,7 +202,8 @@ class TelegramWebhookController extends Controller
                     'Status: <code>'.e($account?->auth_status ?? '-').'</code>',
                     'Session String: <code>'.e($account?->session_string ? 'ada ('.strlen($account->session_string).')' : '-').'</code>',
                     'Pending Session: <code>'.e($account?->pending_session_string ? 'ada ('.strlen($account->pending_session_string).')' : '-').'</code>',
-                    'Session File: <code>'.e($sessionFile && is_file($sessionFile) ? 'ada' : '-').'</code>',
+                    'Session File: <code>'.e($sessionFileExists ? 'ada' : '-').'</code>',
+                    'Perlu Login Ulang: <code>'.($needsRelogin ? 'ya' : 'tidak').'</code>',
                     '',
                     '<b>Watcher Log</b>',
                     '<code>'.e($log ?: '-').'</code>',
