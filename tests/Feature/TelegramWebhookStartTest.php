@@ -178,6 +178,57 @@ class TelegramWebhookStartTest extends TestCase
         });
     }
 
+    public function test_access_code_accepts_minor_format_differences(): void
+    {
+        config([
+            'services.telegram.bot_token' => 'testing-token',
+            'services.telegram.webhook_secret' => 'testing-secret',
+        ]);
+
+        Http::fake([
+            'https://api.telegram.org/bottesting-token/sendMessage' => Http::response(['ok' => true]),
+        ]);
+
+        TelegramAccessCode::create([
+            'code' => 'PROMO-1',
+            'is_active' => true,
+            'max_uses' => 3,
+        ]);
+
+        $account = TelegramClientAccount::create([
+            'bot_chat_id' => '987654321',
+            'bot_user_id' => '987654321',
+            'session_name' => 'client_987654321_test',
+            'auth_status' => 'awaiting_access_code',
+            'is_active' => true,
+        ]);
+
+        $response = $this
+            ->withHeader('X-Telegram-Bot-Api-Secret-Token', 'testing-secret')
+            ->postJson('/telegram/webhook', [
+                'update_id' => 28,
+                'message' => [
+                    'message_id' => 23,
+                    'text' => ' promo1 ',
+                    'chat' => [
+                        'id' => 987654321,
+                        'type' => 'private',
+                    ],
+                    'from' => [
+                        'id' => 987654321,
+                        'is_bot' => false,
+                        'first_name' => 'Tester',
+                    ],
+                ],
+            ]);
+
+        $response->assertOk()->assertJson(['ok' => true]);
+
+        $account->refresh();
+
+        $this->assertSame('awaiting_phone', $account->auth_status);
+    }
+
     public function test_invalid_access_code_does_not_unlock_phone_number_step(): void
     {
         config([

@@ -781,13 +781,22 @@ class TelegramWebhookController extends Controller
         TelegramBotService $telegram
     ): bool {
         $codeText = $this->normalizeAccessCode($text);
-        $accessCode = TelegramAccessCode::where('code', $codeText)->first();
+        $accessCode = $this->findAccessCode($codeText);
 
         if (! $accessCode || ! $accessCode->isAvailable()) {
+            Log::warning('Telegram access code rejected', [
+                'bot_chat_id' => $account->bot_chat_id,
+                'input_code' => $codeText,
+                'reason' => $this->accessCodeUnavailableReason($accessCode),
+                'access_code_id' => $accessCode?->id,
+            ]);
+
             $telegram->sendMessage($account->bot_chat_id, implode("\n", [
                 '<b>⚠️ Kode akses tidak valid.</b>',
                 '',
-                $this->quote('Pastikan kode masih aktif, belum expired, dan belum melewati batas pemakaian. Hubungi admin kalau belum punya kode.'),
+                $this->quote($this->accessCodeUnavailableReason($accessCode)),
+                '',
+                'Kode terbaca: <code>'.e($codeText ?: '-').'</code>',
             ]), [
                 'parse_mode' => 'HTML',
                 'reply_markup' => $this->mainMenuKeyboard(),
@@ -1206,7 +1215,55 @@ class TelegramWebhookController extends Controller
 
     protected function normalizeAccessCode(string $text): string
     {
+        $text = preg_replace('/[\x{200B}-\x{200D}\x{FEFF}]/u', '', $text) ?? $text;
+
         return strtoupper(trim($text));
+    }
+
+    protected function compactAccessCode(string $text): string
+    {
+        return preg_replace('/[^A-Z0-9]+/', '', $this->normalizeAccessCode($text)) ?? '';
+    }
+
+    protected function findAccessCode(string $codeText): ?TelegramAccessCode
+    {
+        $exact = TelegramAccessCode::where('code', $codeText)->first();
+
+        if ($exact) {
+            return $exact;
+        }
+
+        $compactCode = $this->compactAccessCode($codeText);
+
+        if ($compactCode === '') {
+            return null;
+        }
+
+        return TelegramAccessCode::query()
+            ->latest()
+            ->get()
+            ->first(fn (TelegramAccessCode $accessCode) => $this->compactAccessCode($accessCode->code) === $compactCode);
+    }
+
+    protected function accessCodeUnavailableReason(?TelegramAccessCode $accessCode): string
+    {
+        if (! $accessCode) {
+            return 'Kode tidak ditemukan di database admin. Cek lagi penulisan kode atau buat kode baru di menu Access Codes.';
+        }
+
+        if (! $accessCode->is_active) {
+            return 'Kode ditemukan, tapi statusnya sedang nonaktif di admin.';
+        }
+
+        if ($accessCode->expires_at !== null && $accessCode->expires_at->isPast()) {
+            return 'Kode ditemukan, tapi masa aktifnya sudah expired.';
+        }
+
+        if ($accessCode->isQuotaExhausted()) {
+            return 'Kode ditemukan, tapi kuota pemakaiannya sudah habis.';
+        }
+
+        return 'Kode ditemukan, tapi belum bisa dipakai. Cek status kode di admin.';
     }
 
     protected function looksLikePhoneNumber(string $text): bool
