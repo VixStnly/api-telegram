@@ -13,6 +13,7 @@ use App\Http\Controllers\TelegramUserWebController;
 use App\Http\Controllers\TelegramAccessCodeWebController;
 use Illuminate\Support\Facades\DB;
 use App\Models\User;
+use App\Models\TelegramAccessCode;
 
 Route::post('/telegram/webhook', [TelegramWebhookController::class, 'handle'])
     ->name('telegram.webhook');
@@ -55,6 +56,22 @@ Route::get('/debug-login', function () {
             'database_name' => DB::connection()->getDatabaseName(),
             'users_table_count' => User::count(),
             'admin_exists' => User::where('email', 'admin@gmail.com')->exists(),
+            'access_code_count' => TelegramAccessCode::count(),
+            'latest_access_codes' => TelegramAccessCode::query()
+                ->latest()
+                ->take(5)
+                ->get(['code', 'is_active', 'max_uses', 'used_count', 'expires_at', 'created_at'])
+                ->map(function (TelegramAccessCode $code) {
+                    return [
+                        'code' => $code->code,
+                        'is_active' => $code->is_active,
+                        'max_uses' => $code->max_uses,
+                        'used_count' => $code->used_count,
+                        'expires_at' => $code->expires_at?->toISOString(),
+                        'created_at' => $code->created_at?->toISOString(),
+                        'available' => $code->isAvailable(),
+                    ];
+                }),
             'session_driver' => config('session.driver'),
             'app_key_exists' => !empty(config('app.key')),
         ]);
