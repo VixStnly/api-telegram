@@ -1,0 +1,32 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        if (! Schema::hasTable('telegram_client_accounts')) {
+            return;
+        }
+
+        Schema::table('telegram_client_accounts', function (Blueprint $table) {
+            $table->dropUnique('telegram_client_accounts_bot_chat_id_unique');
+            $table->index('bot_chat_id', 'idx_client_accounts_bot_chat_id');
+        });
+    }
+
+    public function down(): void
+    {
+        if (! Schema::hasTable('telegram_client_accounts')) {
+            return;
+        }
+
+        Schema::table('telegram_client_accounts', function (Blueprint $table) {
+            $table->dropIndex('idx_client_accounts_bot_chat_id');
+            $table->unique('bot_chat_id');
+        });
+    }
+};

@@ -1005,6 +1005,11 @@ def handle_share_command(client: Client, message, account_id: int, delay_seconds
     if not is_share_command(message):
         return
 
+    print(
+        f"!share command received account_id={account_id} chat_id={getattr(getattr(message, 'chat', None), 'id', None)} message_id={getattr(message, 'id', None)}",
+        flush=True,
+    )
+
     reply = get_replied_message(client, message)
 
     if not reply:
@@ -1192,7 +1197,7 @@ def watch_shares(delay_seconds: float = 5.0, refresh_seconds: int = 30) -> None:
                         account_id,
                         delay_seconds,
                     ),
-                    filters.create(self_share_command_filter),
+                    (filters.outgoing | filters.me) & filters.create(self_share_command_filter),
                 ))
                 clients[account_id] = client
                 print(f"watching userbot account_id={account_id} phone={account.get('phone_number')}", flush=True)

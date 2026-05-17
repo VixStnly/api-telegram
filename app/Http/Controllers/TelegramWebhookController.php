@@ -261,16 +261,7 @@ class TelegramWebhookController extends Controller
         }
 
         if ($data === 'userbot:create') {
-            $account = $this->findOrRegisterClientAccount($chatId, $from);
-
-            if ($account->auth_status === 'authorized') {
-                $telegram->sendMessage($chatId, $this->userbotSettingsMessage($account), [
-                    'parse_mode' => 'HTML',
-                    'reply_markup' => $this->userbotSettingsKeyboard($account),
-                ]);
-
-                return;
-            }
+            $account = $this->newClientAccount($chatId, $from);
 
             $account->update([
                 'auth_status' => 'awaiting_phone',
@@ -842,7 +833,11 @@ class TelegramWebhookController extends Controller
 
     protected function registerClientAccount(string $chatId, array $from): TelegramClientAccount
     {
-        $account = TelegramClientAccount::firstOrNew(['bot_chat_id' => $chatId]);
+        $account = TelegramClientAccount::where('bot_chat_id', $chatId)
+            ->whereNull('phone_number')
+            ->whereNotIn('auth_status', ['authorized'])
+            ->latest()
+            ->first() ?? new TelegramClientAccount(['bot_chat_id' => $chatId]);
 
         if (! $account->exists) {
             $account->session_name = 'client_'.Str::slug($chatId).'_'.Str::lower(Str::random(8));
@@ -863,8 +858,31 @@ class TelegramWebhookController extends Controller
 
     protected function findOrRegisterClientAccount(string $chatId, array $from): TelegramClientAccount
     {
-        return TelegramClientAccount::where('bot_chat_id', $chatId)->first()
+        return TelegramClientAccount::where('bot_chat_id', $chatId)
+            ->whereIn('auth_status', ['awaiting_phone', 'sending_code', 'awaiting_code', 'awaiting_password', 'idle'])
+            ->latest()
+            ->first()
             ?? $this->registerClientAccount($chatId, $from);
+    }
+
+    protected function newClientAccount(string $chatId, array $from): TelegramClientAccount
+    {
+        $account = new TelegramClientAccount([
+            'bot_chat_id' => $chatId,
+            'session_name' => 'client_'.Str::slug($chatId).'_'.Str::lower(Str::random(8)),
+            'auth_status' => 'idle',
+        ]);
+
+        $account->fill([
+            'bot_user_id' => isset($from['id']) ? (string) $from['id'] : null,
+            'bot_username' => $from['username'] ?? null,
+            'bot_first_name' => $from['first_name'] ?? null,
+            'last_seen_at' => now(),
+            'is_active' => true,
+        ]);
+        $account->save();
+
+        return $account;
     }
 
     protected function normalizePhoneNumber(string $text): ?string

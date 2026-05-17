@@ -166,7 +166,7 @@ class TelegramWebhookStartTest extends TestCase
         $this->assertSame('legacy-session', $account->pending_session_string);
     }
 
-    public function test_create_userbot_button_does_not_reset_authorized_userbot(): void
+    public function test_create_userbot_button_creates_new_slot_without_resetting_authorized_userbot(): void
     {
         config([
             'services.telegram.bot_token' => 'testing-token',
@@ -215,6 +215,12 @@ class TelegramWebhookStartTest extends TestCase
 
         $this->assertSame('authorized', $account->auth_status);
         $this->assertSame('saved-session', $account->session_string);
+
+        $this->assertDatabaseHas('telegram_client_accounts', [
+            'bot_chat_id' => '987654321',
+            'phone_number' => null,
+            'auth_status' => 'awaiting_phone',
+        ]);
     }
 
     public function test_two_factor_password_is_stored_for_running_login_worker(): void
