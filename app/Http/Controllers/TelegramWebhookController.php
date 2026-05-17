@@ -304,10 +304,10 @@ class TelegramWebhookController extends Controller
         }
 
         if (str_starts_with($data, 'userbot:settings:')) {
-            $account = $this->authorizedAccountFromCallback($chatId, $data, 'userbot:settings:');
+            $account = $this->accountFromCallback($chatId, $data, 'userbot:settings:');
 
             if (! $account) {
-                $telegram->sendMessage($chatId, 'Userbot belum aktif atau bukan milik chat ini.');
+                $telegram->sendMessage($chatId, 'Userbot tidak valid atau bukan milik chat ini.');
 
                 return;
             }
@@ -394,16 +394,30 @@ class TelegramWebhookController extends Controller
         string $data,
         string $prefix
     ): ?TelegramClientAccount {
+        return $this->accountFromCallback($botChatId, $data, $prefix, ['authorized']);
+    }
+
+    protected function accountFromCallback(
+        string $botChatId,
+        string $data,
+        string $prefix,
+        ?array $statuses = null
+    ): ?TelegramClientAccount {
         $accountId = (int) Str::after($data, $prefix);
 
         if ($accountId <= 0) {
             return null;
         }
 
-        return TelegramClientAccount::where('bot_chat_id', $botChatId)
+        $query = TelegramClientAccount::where('bot_chat_id', $botChatId)
             ->whereKey($accountId)
-            ->where('auth_status', 'authorized')
-            ->first();
+            ->whereNotNull('phone_number');
+
+        if ($statuses !== null) {
+            $query->whereIn('auth_status', $statuses);
+        }
+
+        return $query->first();
     }
 
     protected function sendUserbotGroupPicker(
@@ -514,28 +528,43 @@ class TelegramWebhookController extends Controller
             'Nomor: <code>'.e($account->phone_number ?? '-').'</code>',
             'Status: <code>'.e($account->auth_status).'</code>',
             'Grup aktif: <code>'.$activeGroups.'</code>',
+            $account->auth_status === 'error' && $account->last_error
+                ? 'Error: <code>'.e(Str::limit($account->last_error, 300)).'</code>'
+                : null,
             '',
-            'Pilih menu setting di bawah.',
+            $account->auth_status === 'error'
+                ? 'Session userbot ini sudah tidak valid. Silakan buat userbot baru dan login ulang.'
+                : 'Pilih menu setting di bawah.',
         ]);
     }
 
     protected function userbotSettingsKeyboard(TelegramClientAccount $account): array
     {
-        return [
-            'inline_keyboard' => [
-                [
-                    [
-                        'text' => 'Add Grup',
-                        'callback_data' => 'userbot:add_group:'.$account->id,
-                    ],
-                ],
-                [
-                    [
-                        'text' => 'Kembali ke List Bot',
-                        'callback_data' => 'userbot:list',
-                    ],
-                ],
+        $rows = [];
+
+        if ($account->auth_status === 'authorized') {
+            $rows[] = [[
+                'text' => 'Add Grup',
+                'callback_data' => 'userbot:add_group:'.$account->id,
+            ]];
+        }
+
+        if ($account->auth_status === 'error') {
+            $rows[] = [[
+                'text' => 'Buat Userbot Baru',
+                'callback_data' => 'userbot:create',
+            ]];
+        }
+
+        $rows[] = [
+            [
+                'text' => 'Kembali ke List Bot',
+                'callback_data' => 'userbot:list',
             ],
+        ];
+
+        return [
+            'inline_keyboard' => $rows,
         ];
     }
 

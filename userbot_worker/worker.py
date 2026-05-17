@@ -147,6 +147,40 @@ def send_install_notice_to_saved_messages(app: Client) -> None:
         print(f"saved messages notice failed: {exc}", flush=True)
 
 
+def is_auth_key_error(exc: Exception) -> bool:
+    text = str(exc).upper()
+
+    return "AUTH_KEY_UNREGISTERED" in text or "AUTHKEYUNREGISTERED" in text
+
+
+def mark_account_session_error(conn, account: dict[str, Any], exc: Exception) -> None:
+    error = str(exc)
+
+    execute(
+        conn,
+        """
+        update telegram_client_accounts
+        set auth_status = 'error',
+            is_active = 0,
+            last_error = %s,
+            updated_at = now()
+        where id = %s
+        """,
+        (error, account["id"]),
+    )
+
+    if account.get("bot_chat_id"):
+        send_bot_message(account["bot_chat_id"], "\n".join([
+            "<b>Userbot tidak bisa dipakai.</b>",
+            "",
+            "Session Telegram akun ini sudah tidak valid, jadi <code>!share</code> tidak bisa diproses dari akun userbot.",
+            "",
+            "Silakan klik <b>Buat Userbot Baru</b> lalu login ulang.",
+            "",
+            f"Detail: <code>{error[:500]}</code>",
+        ]))
+
+
 def wait_for_2fa_password(conn, account_id: int, login_token: str, deadline: float) -> str | None:
     print("waiting for 2fa password", flush=True)
 
@@ -799,23 +833,30 @@ def list_groups(account_id: int) -> None:
 
     groups = []
 
-    with client_for(account, config) as app:
-        for dialog in app.get_dialogs():
-            chat = dialog.chat
-            chat_type = str(getattr(chat, "type", "")).lower()
+    try:
+        with client_for(account, config) as app:
+            for dialog in app.get_dialogs():
+                chat = dialog.chat
+                chat_type = str(getattr(chat, "type", "")).lower()
 
-            if "group" not in chat_type:
-                continue
+                if "group" not in chat_type:
+                    continue
 
-            groups.append({
-                "chat_id": str(chat.id),
-                "title": getattr(chat, "title", None) or getattr(chat, "first_name", None) or str(chat.id),
-                "username": getattr(chat, "username", None),
-                "type": chat_type,
-            })
+                groups.append({
+                    "chat_id": str(chat.id),
+                    "title": getattr(chat, "title", None) or getattr(chat, "first_name", None) or str(chat.id),
+                    "username": getattr(chat, "username", None),
+                    "type": chat_type,
+                })
 
-            if len(groups) >= 80:
-                break
+                if len(groups) >= 80:
+                    break
+    except Exception as exc:
+        if is_auth_key_error(exc):
+            with db_connect(config) as conn:
+                mark_account_session_error(conn, account, exc)
+
+        raise
 
     print(json.dumps({
         "status": "ok",
@@ -1203,6 +1244,12 @@ def watch_shares(delay_seconds: float = 5.0, refresh_seconds: int = 30) -> None:
                 print(f"watching userbot account_id={account_id} phone={account.get('phone_number')}", flush=True)
             except Exception as exc:
                 print(f"watcher start failed account_id={account_id}: {exc}", flush=True)
+                if is_auth_key_error(exc):
+                    try:
+                        with db_connect(config) as conn:
+                            mark_account_session_error(conn, account, exc)
+                    except Exception as notify_exc:
+                        print(f"watcher session error notify failed account_id={account_id}: {notify_exc}", flush=True)
 
         time.sleep(refresh_seconds)
 
