@@ -303,6 +303,16 @@ class TelegramWebhookController extends Controller
 
             $telegram->sendMessage($chatId, $this->requestPhoneMessage(), [
                 'parse_mode' => 'HTML',
+                'reply_markup' => $this->mainMenuKeyboard(),
+            ]);
+
+            return;
+        }
+
+        if ($data === 'bot:menu') {
+            $telegram->sendMessage($chatId, $this->welcomeMessage(), [
+                'parse_mode' => 'HTML',
+                'reply_markup' => $this->welcomeKeyboard(),
             ]);
 
             return;
@@ -326,7 +336,7 @@ class TelegramWebhookController extends Controller
                     $this->quote('Klik 🚀 Buat Userbot untuk menghubungkan akun Telegram pertama kamu.'),
                 ]), [
                     'parse_mode' => 'HTML',
-                    'reply_markup' => $this->welcomeKeyboard(),
+                    'reply_markup' => $this->mainMenuKeyboard(),
                 ]);
 
                 return;
@@ -424,10 +434,13 @@ class TelegramWebhookController extends Controller
                 '',
                 $this->quote('Kelola userbot Telegram untuk share promosi ke grup yang sudah kamu pilih sendiri.'),
                 '',
-                '🚀 Buat userbot',
-                '📌 Pilih grup target',
-                '⚡ Share pesan lebih cepat lewat forward',
-            ]), ['parse_mode' => 'HTML']);
+                '1. Buat userbot',
+                '2. Pilih grup target',
+                '3. Share pesan lebih cepat lewat forward',
+            ]), [
+                'parse_mode' => 'HTML',
+                'reply_markup' => $this->mainMenuKeyboard(),
+            ]);
 
             return;
         }
@@ -438,11 +451,14 @@ class TelegramWebhookController extends Controller
                 '',
                 $this->quote('Gunakan fitur share dengan rapi supaya akun tetap aman dan grup tetap nyaman.'),
                 '',
-                '1. ✅ Gunakan hanya untuk grup yang kamu ikuti.',
-                '2. 🚫 Jangan kirim spam berlebihan.',
-                '3. 🛡️ Pakai jeda kirim kalau target grup banyak.',
-                '4. 👤 Limit akun Telegram menjadi tanggung jawab pemilik akun.',
-            ]), ['parse_mode' => 'HTML']);
+                '1. Gunakan hanya untuk grup yang kamu ikuti.',
+                '2. Jangan kirim spam berlebihan.',
+                '3. Pakai jeda kirim kalau target grup banyak.',
+                '4. Limit akun Telegram menjadi tanggung jawab pemilik akun.',
+            ]), [
+                'parse_mode' => 'HTML',
+                'reply_markup' => $this->mainMenuKeyboard(),
+            ]);
         }
     }
 
@@ -511,7 +527,10 @@ class TelegramWebhookController extends Controller
                     $this->quote('Worker belum berhasil membaca daftar grup.'),
                     '',
                     $this->formatWorkerErrorForTelegram($result, 'Alasan'),
-                ]), ['parse_mode' => 'HTML']);
+                ]), [
+                    'parse_mode' => 'HTML',
+                    'reply_markup' => $this->userbotSettingsKeyboard($account),
+                ]);
 
                 return;
             }
@@ -543,7 +562,7 @@ class TelegramWebhookController extends Controller
         $this->sendOrEditBotMessage($telegram, $chatId, $messageId, implode("\n", [
             '<b>📌 Pilih grup target promosi</b>',
             '',
-            $this->quote('Klik nama grup untuk masuk atau keluar dari list share. Grup bertanda ✅ akan menerima pesan.'),
+            $this->quote('Klik nama grup untuk masuk atau keluar dari list share. Grup bertanda [ON] akan menerima pesan.'),
         ]), [
             'parse_mode' => 'HTML',
             'reply_markup' => $this->groupPickerKeyboard($account),
@@ -596,7 +615,7 @@ class TelegramWebhookController extends Controller
         $rows = [];
 
         foreach ($accounts as $account) {
-            $label = '🤖 '.trim(($account->phone_number ?? 'Userbot').' • '.$account->auth_status);
+            $label = trim(($account->phone_number ?? 'Userbot').' • '.$account->auth_status);
 
             $rows[] = [[
                 'text' => Str::limit($label, 60, '...'),
@@ -607,6 +626,11 @@ class TelegramWebhookController extends Controller
         $rows[] = [[
             'text' => '🚀 Buat Userbot Baru',
             'callback_data' => 'userbot:create',
+        ]];
+
+        $rows[] = [[
+            'text' => '🏠 Kembali ke Menu Utama',
+            'callback_data' => 'bot:menu',
         ]];
 
         return ['inline_keyboard' => $rows];
@@ -621,11 +645,11 @@ class TelegramWebhookController extends Controller
         return implode("\n", [
             '<b>⚙️ Setting Userbot</b>',
             '',
-            '📱 Nomor: <code>'.e($account->phone_number ?? '-').'</code>',
-            '🟢 Status: <code>'.e($account->auth_status).'</code>',
-            '📌 Grup aktif: <code>'.$activeGroups.'</code>',
+            'Nomor: <code>'.e($account->phone_number ?? '-').'</code>',
+            'Status: <code>'.e($account->auth_status).'</code>',
+            'Grup aktif: <code>'.$activeGroups.'</code>',
             $account->auth_status === 'error' && $account->last_error
-                ? '⚠️ Error: <code>'.e(Str::limit($account->last_error, 300)).'</code>'
+                ? 'Error: <code>'.e(Str::limit($account->last_error, 300)).'</code>'
                 : null,
             '',
             $account->auth_status === 'error'
@@ -659,6 +683,11 @@ class TelegramWebhookController extends Controller
             ],
         ];
 
+        $rows[] = [[
+            'text' => '🏠 Kembali ke Menu Utama',
+            'callback_data' => 'bot:menu',
+        ]];
+
         return [
             'inline_keyboard' => $rows,
         ];
@@ -675,7 +704,7 @@ class TelegramWebhookController extends Controller
         $rows = [];
 
         foreach ($groups as $group) {
-            $prefix = $group->status === 'active' ? '✅ ' : '▫️ ';
+            $prefix = $group->status === 'active' ? '[ON] ' : '[ ] ';
             $title = $group->title ?: $group->chat_id;
 
             $rows[] = [[
@@ -687,6 +716,11 @@ class TelegramWebhookController extends Controller
         $rows[] = [[
             'text' => '⬅️ Kembali ke Setting',
             'callback_data' => 'userbot:settings:'.$account->id,
+        ]];
+
+        $rows[] = [[
+            'text' => '🏠 Kembali ke Menu Utama',
+            'callback_data' => 'bot:menu',
         ]];
 
         return ['inline_keyboard' => $rows];
@@ -1172,10 +1206,10 @@ class TelegramWebhookController extends Controller
             '',
             $this->quote('Kirim nomor Telegram yang ingin kamu hubungkan.'),
             '',
-            '🌏 Format wajib pakai kode negara.',
+            'Format wajib pakai kode negara.',
             'Contoh: <code>+6281234567890</code>',
             '',
-            '🔐 Setelah itu Telegram akan mengirim kode OTP ke akun tersebut.',
+            'Setelah itu Telegram akan mengirim kode OTP ke akun tersebut.',
             'Masukkan OTP lewat tombol web yang bot kirim, bukan lewat chat.',
         ]);
     }
@@ -1188,6 +1222,12 @@ class TelegramWebhookController extends Controller
                     [
                         'text' => '🔐 Input OTP',
                         'url' => $this->otpUrl($account),
+                    ],
+                ],
+                [
+                    [
+                        'text' => '🏠 Kembali ke Menu Utama',
+                        'callback_data' => 'bot:menu',
                     ],
                 ],
             ],
@@ -1216,10 +1256,10 @@ class TelegramWebhookController extends Controller
             $this->quote('Kelola userbot Telegram untuk bantu share promosi jualan ke grup-grup yang sudah kamu daftarkan.'),
             '',
             '<b>Yang bisa kamu lakukan:</b>',
-            '🚀 Membuat userbot dari akun Telegram kamu',
-            '📌 Menyimpan daftar grup target promosi',
-            '⚡ Mengirim pesan promosi dengan command <code>!share</code>',
-            '🛡️ Melihat status userbot dan rules penggunaan',
+            '1. Membuat userbot dari akun Telegram kamu',
+            '2. Menyimpan daftar grup target promosi',
+            '3. Mengirim pesan promosi dengan command <code>!share</code>',
+            '4. Melihat status userbot dan rules penggunaan',
             '',
             'Pilih menu di bawah untuk mulai.',
         ]);
@@ -1247,6 +1287,20 @@ class TelegramWebhookController extends Controller
                     [
                         'text' => '📜 Rules',
                         'callback_data' => 'bot:rules',
+                    ],
+                ],
+            ],
+        ];
+    }
+
+    protected function mainMenuKeyboard(): array
+    {
+        return [
+            'inline_keyboard' => [
+                [
+                    [
+                        'text' => '🏠 Kembali ke Menu Utama',
+                        'callback_data' => 'bot:menu',
                     ],
                 ],
             ],
