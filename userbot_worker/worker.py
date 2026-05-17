@@ -658,6 +658,7 @@ def login_flow(account_id: int, login_token: str, timeout_seconds: int = 300) ->
                     phone_code_hash = null,
                     pending_otp_code = null,
                     pending_2fa_password = null,
+                    session_file = %s,
                     session_string = %s,
                     pending_session_string = %s,
                     pending_login_token = null,
@@ -668,7 +669,13 @@ def login_flow(account_id: int, login_token: str, timeout_seconds: int = 300) ->
                 where id = %s
                   and pending_login_token = %s
                 """,
-                (session_string, session_string, account_id, login_token),
+                (
+                    str(SESSION_DIR / f"{account['session_name']}.session"),
+                    session_string,
+                    session_string,
+                    account_id,
+                    login_token,
+                ),
             )
             send_install_notice_to_saved_messages(app)
 
@@ -1442,6 +1449,18 @@ def acquire_watcher_lock() -> IO[str] | None:
     return lock_file
 
 
+def has_session_material(account: dict[str, Any]) -> bool:
+    if account.get("session_string") or account.get("pending_session_string"):
+        return True
+
+    session_name = account.get("session_name")
+
+    if not session_name:
+        return False
+
+    return (SESSION_DIR / f"{session_name}.session").exists()
+
+
 def watch_shares(delay_seconds: float = 5.0, refresh_seconds: int = 30) -> None:
     watcher_lock = acquire_watcher_lock()
 
@@ -1470,7 +1489,6 @@ def watch_shares(delay_seconds: float = 5.0, refresh_seconds: int = 30) -> None:
                         select * from telegram_client_accounts
                         where is_active = 1
                           and auth_status = 'authorized'
-                          and (session_string is not null or pending_session_string is not null)
                         order by id asc
                         """
                     )
@@ -1492,6 +1510,10 @@ def watch_shares(delay_seconds: float = 5.0, refresh_seconds: int = 30) -> None:
                 account_id = int(account["id"])
 
                 if account_id in clients:
+                    continue
+
+                if not has_session_material(account):
+                    print(f"skip authorized account without session material account_id={account_id}", flush=True)
                     continue
 
                 try:

@@ -167,15 +167,12 @@ class TelegramWebhookController extends Controller
                 $watcher = $pyrogram->ensureShareWatcherRunning();
                 $account = TelegramClientAccount::where('bot_chat_id', $chatId)
                     ->where('auth_status', 'authorized')
-                    ->where(function ($query) {
-                        $query->whereNotNull('session_string')
-                            ->orWhereNotNull('pending_session_string');
-                    })
                     ->latest()
                     ->first();
                 $logPath = storage_path('logs/userbot-share-watcher.log');
                 $log = is_file($logPath) ? file_get_contents($logPath) : 'Log watcher belum ada.';
                 $log = Str::limit(trim((string) $log), 2500);
+                $sessionFile = $account ? storage_path('app/telegram-sessions/'.$account->session_name.'.session') : null;
 
                 $telegram->sendMessage($chatId, implode("\n", [
                     '<b>Debug Share Watcher</b>',
@@ -187,6 +184,7 @@ class TelegramWebhookController extends Controller
                     'Status: <code>'.e($account?->auth_status ?? '-').'</code>',
                     'Session String: <code>'.e($account?->session_string ? 'ada ('.strlen($account->session_string).')' : '-').'</code>',
                     'Pending Session: <code>'.e($account?->pending_session_string ? 'ada ('.strlen($account->pending_session_string).')' : '-').'</code>',
+                    'Session File: <code>'.e($sessionFile && is_file($sessionFile) ? 'ada' : '-').'</code>',
                     '',
                     '<b>Watcher Log</b>',
                     '<code>'.e($log ?: '-').'</code>',
